@@ -21,7 +21,7 @@ $ git merge upstream/master
 
 When you work on an issue/ticket:
 ```
-$ git checkott master
+$ git checkout master
 $ git merge upstream/master # up to date!
 $ git checkout -b branch-name  # branchname is ticket-number hyphen description
 ```
