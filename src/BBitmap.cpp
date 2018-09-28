@@ -424,7 +424,7 @@ void BBitmap::DrawFastVLine(BViewPort *aViewPort, TInt aX, TInt aY, TUint aH, TU
 
   // Don't end past the bottom edge
   if (yEnd > clipRectHeight) {
-    yEnd = clipRectWidth;
+    yEnd = clipRectHeight;
   }
 
   // calculate actual height (even if unchanged)
@@ -470,19 +470,167 @@ void BBitmap::DrawLine(BViewPort *aViewPort, TInt aX1, TInt aY1, TInt aX2, TInt 
 
   // Draw simple lines if possible
   if (aY1 == aY2) {
-    if (aX2 > aX1) {
-      DrawFastHLine(aViewPort, aX1, aY1, aX2 - aX1 + 1, aColor);
-    } else if (aX2 < aX1) {
-      DrawFastHLine(aViewPort, aX2, aY1, aX1 - aX2 + 1, aColor);
+    // Do y bounds checks
+    if (aY1 < viewPortOffsetY || aY1 >= clipRectHeight) {
+      return;
+    }
+
+    if (aX1 == aX2) {
+      if (aX1 >= viewPortOffsetX && aX1 < clipRectWidth) {
+        // Draw a single pixel at aX1, aY1
+        WritePixel(aX1, aY1, aColor);
+      }
+    } else if (aX2 > aX1) {
+      // Draw horizontal line at aX1, aY1
+
+      // last x point + 1
+      TInt16 xEnd = aX1 + aX2 - aX1 + 1;
+
+      // Check if the entire line is not on the display
+      if (xEnd <= viewPortOffsetX || aX1 >= clipRectWidth) {
+        return;
+      }
+
+      // Don't start before the left edge
+      if (aX1 < viewPortOffsetX) {
+        aX1 = viewPortOffsetX;
+      }
+
+      // Don't end past the right edge
+      if (xEnd > clipRectWidth) {
+        xEnd = clipRectWidth;
+      }
+
+      // calculate actual width (even if unchanged)
+      TUint w = xEnd - aX1;
+
+      while (w > 3) {
+        WritePixel(aX1++, aY1, aColor);
+        WritePixel(aX1++, aY1, aColor);
+        WritePixel(aX1++, aY1, aColor);
+        WritePixel(aX1++, aY1, aColor);
+        w -= 4;
+      }
+
+      while (w > 0) {
+        WritePixel(aX1++, aY1, aColor);
+        w--;
+      }
     } else {
-      WritePixel(aX1, aY1, aColor);
+      // Draw horizontal line at aX2, aY1
+
+      // last x point + 1
+      TInt16 xEnd = aX2 + aX1 - aX2 + 1;
+
+      // Check if the entire line is not on the display
+      if (xEnd <= viewPortOffsetX || aX1 >= clipRectWidth) {
+        return;
+      }
+
+      // Don't start before the left edge
+      if (aX2 < viewPortOffsetX) {
+        aX2 = viewPortOffsetX;
+      }
+
+      // Don't end past the right edge
+      if (xEnd > clipRectWidth) {
+        xEnd = clipRectWidth;
+      }
+
+      // calculate actual width (even if unchanged)
+      TUint w = xEnd - aX2;
+
+      while (w > 3) {
+        WritePixel(aX2++, aY1, aColor);
+        WritePixel(aX2++, aY1, aColor);
+        WritePixel(aX2++, aY1, aColor);
+        WritePixel(aX2++, aY1, aColor);
+        w -= 4;
+      }
+
+      while (w > 0) {
+        WritePixel(aX2++, aY1, aColor);
+        w--;
+      }
     }
     return;
   } else if (aX1 == aX2) {
+    // Do x bounds checks
+    if (aX1 < viewPortOffsetX || aX1 >= clipRectWidth) {
+      return;
+    }
     if (aY2 > aY1) {
-      DrawFastVLine(aViewPort, aX1, aY1, aY2 - aY1 + 1, aColor);
+      // Draw vertical line at aX1, aY1
+
+      // last y point + 1
+      TInt16 yEnd = aY1 + aY2 -aY1 + 1;
+
+      // Check if the entire line is not on the display
+      if (yEnd <= viewPortOffsetY || aY1 >= clipRectHeight) {
+        return;
+      }
+
+      // Don't start before the top edge
+      if (aY1 < viewPortOffsetY) {
+        aY1 = viewPortOffsetY;
+      }
+
+      // Don't end past the bottom edge
+      if (yEnd > clipRectHeight) {
+        yEnd = clipRectHeight;
+      }
+
+      // calculate actual height (even if unchanged)
+      TUint h = yEnd - aY1;
+
+      while (h > 3) {
+        WritePixel(aX1, aY1++, aColor);
+        WritePixel(aX1, aY1++, aColor);
+        WritePixel(aX1, aY1++, aColor);
+        WritePixel(aX1, aY1++, aColor);
+        h -= 4;
+      }
+
+      while (h > 0) {
+        WritePixel(aX1, aY1++, aColor);
+        h--;
+      }
     } else {
-      DrawFastVLine(aViewPort, aX1, aY2, aY1 - aY2 + 1, aColor);
+      // Draw vertical line at aX1, aY2
+
+      // last y point + 1
+      TInt16 yEnd = aY2 + aY1 - aY2 + 1;
+
+      // Check if the entire line is not on the display
+      if (yEnd <= viewPortOffsetY || aY2 >= clipRectHeight) {
+        return;
+      }
+
+      // Don't start before the top edge
+      if (aY2 < viewPortOffsetY) {
+        aY2 = viewPortOffsetY;
+      }
+
+      // Don't end past the bottom edge
+      if (yEnd > clipRectHeight) {
+        yEnd = clipRectHeight;
+      }
+
+      // calculate actual height (even if unchanged)
+      TUint h = yEnd - aY2;
+
+      while (h > 3) {
+        WritePixel(aX1, aY2++, aColor);
+        WritePixel(aX1, aY2++, aColor);
+        WritePixel(aX1, aY2++, aColor);
+        WritePixel(aX1, aY2++, aColor);
+        h -= 4;
+      }
+
+      while (h > 0) {
+        WritePixel(aX1, aY2++, aColor);
+        h--;
+      }
     }
     return;
   }
@@ -520,12 +668,12 @@ void BBitmap::DrawLine(BViewPort *aViewPort, TInt aX1, TInt aY1, TInt aX2, TInt 
   for (; aX1 <= aX2; aX1++) {
     if (steep) {
       // aY1 is X coord and aX1 is Y coord in this case
-      if ((aY1 >= viewPortOffsetX) && (aY1 <= clipRectWidth) && (aX1 >= viewPortOffsetY) && (aX1 < clipRectHeight)) {
+      if (aY1 >= viewPortOffsetX && aY1 <= clipRectWidth && aX1 >= viewPortOffsetY && aX1 < clipRectHeight) {
         WritePixel(aY1, aX1, aColor);
       }
     } else {
       // aX1 is X coord and aY1 is Y coord in this case
-      if ((aX1 >= viewPortOffsetX) && (aX1 <= clipRectWidth) && (aY1 >= viewPortOffsetY) && (aY1 < clipRectHeight)) {
+      if (aX1 >= viewPortOffsetX && aX1 <= clipRectWidth && aY1 >= viewPortOffsetY && aY1 < clipRectHeight) {
         WritePixel(aX1, aY1, aColor);
       }
     }
