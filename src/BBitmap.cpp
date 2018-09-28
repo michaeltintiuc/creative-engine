@@ -367,8 +367,17 @@ void BBitmap::DrawFastHLine(BViewPort *aViewPort, TInt aX, TInt aY, TUint aW, TU
   // calculate actual width (even if unchanged)
   aW = xEnd - aX;
 
-  while (aW--) {
+  while (aW > 3) {
     WritePixel(aX++, aY, aColor);
+    WritePixel(aX++, aY, aColor);
+    WritePixel(aX++, aY, aColor);
+    WritePixel(aX++, aY, aColor);
+    aW -= 4;
+  }
+
+  while (aW > 0) {
+    WritePixel(aX++, aY, aColor);
+    aW--;
   }
 }
 
@@ -421,8 +430,17 @@ void BBitmap::DrawFastVLine(BViewPort *aViewPort, TInt aX, TInt aY, TUint aH, TU
   // calculate actual height (even if unchanged)
   aH = yEnd - aY;
 
-  while (aH--) {
+  while (aH > 3) {
     WritePixel(aX, aY++, aColor);
+    WritePixel(aX, aY++, aColor);
+    WritePixel(aX, aY++, aColor);
+    WritePixel(aX, aY++, aColor);
+    aH -= 4;
+  }
+
+  while (aH > 0) {
+    WritePixel(aX, aY++, aColor);
+    aH--;
   }
 }
 
