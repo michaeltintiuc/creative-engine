@@ -640,7 +640,7 @@ void BBitmap::DrawLine(BViewPort *aViewPort, TInt aX1, TInt aY1, TInt aX2, TInt 
   const TBool steep = ABS(aY2 - aY1) > ABS(aX2 - aX1);
 
   if (steep) {
-    TInt16 temp = aX1;
+    TUint temp = aX1;
     aX1 = aY1;
     aY1 = temp;
 
@@ -650,7 +650,7 @@ void BBitmap::DrawLine(BViewPort *aViewPort, TInt aX1, TInt aY1, TInt aX2, TInt 
   }
 
   if (aX1 > aX2) {
-    TInt16 temp = aX1;
+    TUint temp = aX1;
     aX1 = aX2;
     aX2 = temp;
 
@@ -665,24 +665,60 @@ void BBitmap::DrawLine(BViewPort *aViewPort, TInt aX1, TInt aY1, TInt aX2, TInt 
 
   TInt16 err = dx / 2;
 
-  for (; aX1 <= aX2; aX1++) {
-    if (steep) {
-      // aY1 is X coord and aX1 is Y coord in this case
-      if (aY1 >= viewPortOffsetX && aY1 <= clipRectWidth && aX1 >= viewPortOffsetY && aX1 < clipRectHeight) {
-        WritePixel(aY1, aX1, aColor);
-      }
+  if (steep) {
+    const TFloat m = (TFloat) (aX2 - aX1) / (aY2 - aY1);
+    if (aX2 < aX1) {
+      aX2 = ((MAX(aX2, viewPortOffsetY) - aX1) + (m * aY1)) / m;
     } else {
-      // aX1 is X coord and aY1 is Y coord in this case
-      if (aX1 >= viewPortOffsetX && aX1 <= clipRectWidth && aY1 >= viewPortOffsetY && aY1 < clipRectHeight) {
-        WritePixel(aX1, aY1, aColor);
+      aX2 = ((MIN(aX2, clipRectHeight) - aX1) + (m * aY1)) / m;
+    }
+
+    // aY1 is X coord and aX1 is Y coord in this case
+    for (; aX1 <= aX2; aX1++) {
+      WritePixel(aY1, aX1, aColor);
+
+      err -= dy;
+
+      if (err < 0) {
+        aY1 += ystep;
+        err += dx;
+      }
+    }
+  } else {
+    const TFloat m = (TFloat) (aY2 - aY1) / (aX2 - aX1);
+
+    if (aX1 < viewPortOffsetX) {
+      if (aY1 < viewPortOffsetY) {
+        aX1 = viewPortOffsetX + (viewPortOffsetX - aX1);
+        aY1 = viewPortOffsetY;
+      } else {
+        aX1 = viewPortOffsetX;
+        const TInt tempDeltaX = aX2 - aX1;
+        aY1 = -tempDeltaX * (m - ((TFloat) aY2 / tempDeltaX));
+      }
+    } else if (aY1 < viewPortOffsetY) {
+      aY1 = viewPortOffsetY;
+      // recalc aX1
+    }
+
+    if (aY2 > clipRectHeight || aY2 < viewPortOffsetY) {
+      if (aY2 < aY1) {
+        aX2 = ((MAX(aY2, viewPortOffsetY) - aY1) + (m * aX1)) / m;
+      } else {
+        aX2 = ((MIN(aY2, clipRectHeight) - aY1) + (m * aX1)) / m;
       }
     }
 
-    err -= dy;
+    // aX1 is X coord and aY1 is Y coord in this case
+    for (; aX1 <= aX2; aX1++) {
+      WritePixel(aX1, aY1, aColor);
 
-    if (err < 0) {
-      aY1 += ystep;
-      err += dx;
+      err -= dy;
+
+      if (err < 0) {
+        aY1 += ystep;
+        err += dx;
+      }
     }
   }
 }
