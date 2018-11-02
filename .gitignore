@@ -77,7 +77,6 @@ wp-content/plugins/hello.php
 
 test/Resources.bin
 test/Resources.h
-build
 cmake-build-debug
 cmake-build-debug/*
 cmake-build-release
