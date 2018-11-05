@@ -15,6 +15,7 @@ struct TBCD {
 
 public:
   void ToString(char aDest[], TBool aZeroPad = ETrue);
+  void ToString(char aDest[], TUint aZeroPad);
 
   void Add(TBCD &aValue);
 

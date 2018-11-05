@@ -5,6 +5,11 @@
 #include <Widgets/BWidget.h>
 #include <Widgets/BSliderWidget.h>
 
+struct TPad {
+  const char padChar;
+  const TInt padCount;
+};
+
 /**
  * Widget implementing a slider UI.
  * Presents a range slider.
@@ -13,9 +18,9 @@
 
 class BNumberWidget : public BWidget {
 public:
-    BNumberWidget(char *aTitle, const TRange *aRange, TInt aForeground, TInt aBackground = -1);
+    BNumberWidget(char *aTitle, const TRange *aRange, const TPad *aPad, TInt aForeground, TInt aBackground = -1);
 
-    BNumberWidget(const char *aTitle, const TRange *aRange, TInt aForeground, TInt aBackground = -1);
+    BNumberWidget(const char *aTitle, const TRange *aRange, const TPad *aPad, TInt aForeground, TInt aBackground = -1);
 
     ~BNumberWidget();
 
@@ -29,8 +34,10 @@ public:
 
 protected:
     const TRange *mRange;
-    const TBool mIsFloat;
-    TFloat mSelectedValue;
+    const TPad   *mPad;
+    const TBool  mIsFloat;
+    const TBool  mIsPadded;
+    TFloat       mSelectedValue;
 };
 
 
