@@ -29,6 +29,7 @@ public:
 
 protected:
     const TRange *mRange;
+    const TBool mIsFloat;
     TFloat mSelectedValue;
 };
 

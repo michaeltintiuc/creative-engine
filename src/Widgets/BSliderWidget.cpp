@@ -17,8 +17,8 @@ BSliderWidget::BSliderWidget(const char *aTitle, const TRange *aRange, TInt aFor
 BSliderWidget::~BSliderWidget() {}
 
 TInt BSliderWidget::Render(TInt aX, TInt aY) {
-  const TInt  fg    = gWidgetTheme.GetInt(WIDGET_TEXT_FG),
-              bg    = gWidgetTheme.GetInt(WIDGET_TEXT_BG),
+  const TInt  fg       = gWidgetTheme.GetInt(WIDGET_TEXT_FG),
+              bg       = gWidgetTheme.GetInt(WIDGET_TEXT_BG),
               maxWidth = (SCREEN_WIDTH - aX * 2);
 
   gDisplay.renderBitmap->DrawRect(ENull, aX, aY, aX + maxWidth - 1, aY + 4, fg);
@@ -34,14 +34,36 @@ TInt BSliderWidget::Render(TInt aX, TInt aY) {
 }
 
 void BSliderWidget::Run() {
-  // move cursor, select, etc.
-  if (IsActive()) {
-    if (gControls.WasPressed(JOYLEFT)) {
+  if (!IsActive()) {
+    return;
+  }
+
+  // Decrement, check min value and convert to TFloat if needed
+  if (gControls.WasPressed(JOYLEFT)) {
+    if (mRange->precision > 0) {
+      mSelectedValue *= mRange->precision;
       mSelectedValue = MAX(mRange->start, mSelectedValue - mRange->step);
-    } else if (gControls.WasPressed(JOYRIGHT)) {
-      mSelectedValue = MIN(mRange->end, mSelectedValue + mRange->step);
-    } else if (gControls.WasPressed(BUTTON_SELECT)) {
-      Select(mSelectedValue);
+      mSelectedValue /= mRange->precision;
+    } else {
+      mSelectedValue = MAX(mRange->start, mSelectedValue - mRange->step);
     }
+    return;
+  }
+
+  // Increment, check max value and convert to TFloat if needed
+  if (gControls.WasPressed(JOYRIGHT)) {
+    if (mRange->precision > 0) {
+      mSelectedValue *= mRange->precision;
+      mSelectedValue = MIN(mRange->end, mSelectedValue + mRange->step);
+      mSelectedValue /= mRange->precision;
+    } else {
+      mSelectedValue = MIN(mRange->end, mSelectedValue + mRange->step);
+    }
+    return;
+  }
+
+  // Store selected value
+  if (gControls.WasPressed(BUTTON_SELECT)) {
+    Select(mSelectedValue);
   }
 }
