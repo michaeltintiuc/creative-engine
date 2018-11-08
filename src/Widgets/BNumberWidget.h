@@ -4,23 +4,25 @@
 #include <BFont.h>
 #include <Widgets/BWidget.h>
 #include <Widgets/BSliderWidget.h>
+#include <Types/TNumber.h>
 
-struct TPad {
-  const char padChar;
-  const TInt padCount;
+struct TNumberOpts {
+  TRange range;
+  TPad   pad;
 };
 
 /**
- * Widget implementing a slider UI.
- * Presents a range slider.
+ * Widget implementing a number UI.
+ * Presents a number.
  * Allows the user to pick a value between start and end in increments of step.
+ * Allows the number to be floating point and padded.
  */
 
 class BNumberWidget : public BWidget {
 public:
-    BNumberWidget(char *aTitle, const TRange *aRange, const TPad *aPad, TInt aForeground, TInt aBackground = -1);
+    BNumberWidget(char *aTitle, const TNumberOpts *aOpts, TInt aForeground, TInt aBackground = -1);
 
-    BNumberWidget(const char *aTitle, const TRange *aRange, const TPad *aPad, TInt aForeground, TInt aBackground = -1);
+    BNumberWidget(const char *aTitle, const TNumberOpts *aOpts, TInt aForeground, TInt aBackground = -1);
 
     ~BNumberWidget();
 
@@ -33,11 +35,8 @@ public:
     virtual void Select(TFloat aValue) = 0;
 
 protected:
-    const TRange *mRange;
-    const TPad   *mPad;
-    const TBool  mIsFloat;
-    const TBool  mIsPadded;
-    TFloat       mSelectedValue;
+    const TNumberOpts *mOpts;
+    TNumber           mSelectedValue;
 };
 
 
