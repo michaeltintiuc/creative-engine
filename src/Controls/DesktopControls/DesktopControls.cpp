@@ -44,8 +44,8 @@ DesktopControls::~DesktopControls() {
 #endif
 }
 
-void DesktopControls::Rumble(TFloat aStrength, TInt aTime) {
 #ifdef CONTROLLER_SUPPORT
+void DesktopControls::Rumble(TFloat aStrength, TInt aTime) {
   if (haptic == ENull || SDL_NumJoysticks() == 0) {
     return;
   }
@@ -53,8 +53,8 @@ void DesktopControls::Rumble(TFloat aStrength, TInt aTime) {
   // Initialize simple rumble
   SDL_HapticRumbleInit(haptic);
   SDL_HapticRumblePlay(haptic, aStrength, aTime);
-#endif
 }
+#endif
 
 TBool DesktopControls::Poll() {
   SDL_Event e;

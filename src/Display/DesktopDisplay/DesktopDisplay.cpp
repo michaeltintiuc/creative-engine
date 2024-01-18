@@ -29,8 +29,14 @@ DesktopDisplay::DesktopDisplay() : Display() {
 //    (Width - (SCREEN_WIDTH * 4)) , // initial resources position
     SDL_WINDOWPOS_UNDEFINED,
     SDL_WINDOWPOS_UNDEFINED, // initial y position
+#ifdef __MODUS_TARGET_HANDHELDS__
+    SCREEN_WIDTH,
+    SCREEN_HEIGHT,
+#else
+    // Easier to develop on desktops
     SCREEN_WIDTH * 2,        // Width in pixels
     SCREEN_HEIGHT * 2,       // Height in pixels
+#endif
     flags                    // flags - see above
   );
 

@@ -41,6 +41,7 @@ SET(CREATIVE_ENGINE_INCLUDE_DIRS
   ${CREATIVE_ENGINE_PATH}/src/Controls
   ${CREATIVE_ENGINE_PATH}/src/Controls/DesktopControls
   ${CREATIVE_ENGINE_PATH}/src/Controls/LDKControls
+  ${CREATIVE_ENGINE_PATH}/src/Controls/GameShellControls
   ${CREATIVE_ENGINE_PATH}/src/Widgets
   ${CREATIVE_ENGINE_PATH}/src/libxmp
   ${CREATIVE_ENGINE_PATH}/src/libxmp/loaders

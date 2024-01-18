@@ -30,6 +30,13 @@ Controls &gControls = child;
 #define DISPLAY
 #endif
 
+#ifdef __MODUS_TARGET_GAMESHELL__
+#include "./GameShellControls/GameShellControls.h"
+static GameShellControls child;
+Controls &gControls = child;
+#define DISPLAY
+#endif
+
 // Desktop only
 #ifndef DISPLAY
 #include "./DesktopControls/DesktopControls.h"
