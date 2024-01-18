@@ -26,10 +26,10 @@ TBool GameShellControls::Poll() {
       fflush(stdout);
 
       switch (e.key.keysym.scancode) {
-        case SDL_SCANCODE_END:
+        case SDL_SCANCODE_L:
           keys |= BUTTONR;
           break;
-        case SDL_SCANCODE_HOME:
+        case SDL_SCANCODE_H:
           keys |= BUTTONL;
           break;
         case SDL_SCANCODE_I:
