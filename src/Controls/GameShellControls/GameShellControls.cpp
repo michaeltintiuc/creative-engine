@@ -73,10 +73,10 @@ TBool GameShellControls::Poll() {
     if (e.type == SDL_KEYUP) {
       switch (e.key.keysym.scancode) {
         // QUIT button, will never be set on target
-        case SDL_SCANCODE_END:
+        case SDL_SCANCODE_L:
           keys &= ~BUTTONR;
           break;
-        case SDL_SCANCODE_HOME:
+        case SDL_SCANCODE_H:
           keys &= ~BUTTONL;
           break;
         case SDL_SCANCODE_I:
