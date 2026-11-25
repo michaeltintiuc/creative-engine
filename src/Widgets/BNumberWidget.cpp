@@ -1,5 +1,5 @@
 #include "BNumberWidget.h"
-#include "Display.h"
+#include "Display/Display.h"
 #include "Controls.h"
 
 BNumberWidget::BNumberWidget(char *aTitle, const TNumberOpts *aOpts, TInt aForeground, TInt aBackground) : BWidget(aTitle), mOpts(aOpts) {
@@ -12,7 +12,7 @@ BNumberWidget::BNumberWidget(const char *aTitle, const TNumberOpts *aOpts, TInt 
   mHeight = 40;
 }
 
-BNumberWidget::~BNumberWidget() {}
+BNumberWidget::~BNumberWidget() = default;
 
 TInt BNumberWidget::Render(TInt aX, TInt aY) {
   const BFont *font = gWidgetTheme.GetFont(WIDGET_TEXT_FONT);
@@ -45,6 +45,5 @@ void BNumberWidget::Run() {
   if (gControls.WasPressed(JOYRIGHT)) {
     mSelectedValue.mVal = MIN(mOpts->range.end, mSelectedValue.mVal + mOpts->range.step);
     Select(mSelectedValue.ToInt());
-    return;
   }
 }

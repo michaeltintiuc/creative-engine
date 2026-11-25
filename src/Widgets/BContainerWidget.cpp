@@ -13,6 +13,7 @@ BContainerWidget::~BContainerWidget() {
     delete w;
     w = n;
   }
+  mList.Reset();
 }
 
 void BContainerWidget::AddWidget(BWidget &aWidget) {
@@ -46,7 +47,8 @@ void BContainerWidget::Run() {
   for (BWidget *w = (BWidget *) mList.First(); !mList.End(w); w = (BWidget *) mList.Next(w)) {
     w->Run();
   }
-  if (gControls.WasPressed(JOYUP)) {
+
+  if (gControls.WasPressed(JOYUP) && OnNavigate(JOYUP) && mCurrentWidget->OnNavigate(JOYUP)) {
     mCurrentWidget->Deactivate();
     if (mCurrentWidget == mList.First()) {
       mCurrentWidget = (BWidget *) mList.Last();
@@ -58,7 +60,8 @@ void BContainerWidget::Run() {
     // reset dKeys so next state doesn't react to any keys already pressed
     gControls.dKeys = 0;
   }
-  if (gControls.WasPressed(JOYDOWN)) {
+
+  if (gControls.WasPressed(JOYDOWN | BUTTON_SELECT) && OnNavigate(JOYDOWN) && mCurrentWidget->OnNavigate(JOYDOWN)) {
     mCurrentWidget->Deactivate();
     if (mCurrentWidget == mList.Last()) {
       mCurrentWidget = (BWidget *) mList.First();

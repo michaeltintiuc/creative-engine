@@ -1,19 +1,16 @@
 #ifndef BBASE_H
 #define BBASE_H
 
+// Uncomment for production build
+// #define PRODUCTION
+
 #include "BTypes.h"
+#include "Memory.h"
+#include <memory>
 
-#ifdef __XTENSA__
-#include "freertos/FreeRTOS.h"
-#define MEMF_SLOW (MALLOC_CAP_8BIT | MALLOC_CAP_SPIRAM)
-#define MEMF_FAST (MALLOC_CAP_8BIT | MALLOC_CAP_DMA)
-
-#else
-
-#define MEMF_SLOW 0
-#define MEMF_FAST (1 << 0)
-
-#endif
+extern void ByteDump(TUint8 *ptr, TInt len, TInt width=8);
+extern void WordDump(TUint16 *ptr, TInt len, TInt width=8);
+extern void LongDump(TUint32 *ptr, TInt len, TInt width=8);
 
 /**
  * BBase is the base class for EVERYTHING.
@@ -35,6 +32,11 @@ public:
  * @param aSeed
  */
 void SeedRandom(TUint32 aSeed);
+
+/**
+  * Get random seed
+  */
+TUint32 GetRandomSeed();
 
 /**
  * Generate a random number
@@ -59,31 +61,6 @@ TInt32 Random(TInt32 aMin, TInt32 aMax);
  */
 TFloat RandomFloat();
 
-/**
- * Allocate memory of specified size and type
- *
- * @param aSize
- * @param aFlags MEMF_FAST or MEMF_SLOW
- * @return
- */
-extern TAny *AllocMem(size_t aSize, TUint16 aFlags);
-
-/**
- * Free memory allocated with AllocMem
- * @param ptr
- */
-extern void FreeMem(TAny *ptr);
-
-/**
- * Resize memory allocated with AllocMem
- */
-extern TAny *ReallocMem(TAny *ptr, size_t aSize);
-
-/**
- * Return available memory of specified type
- */
-extern TUint32 AvailMem(TUint16 aFlags);
-
 #ifdef __XTENSA__
 inline void *operator new(size_t size) { return AllocMem(size, MEMF_SLOW); }
 
@@ -99,15 +76,26 @@ inline void operator delete[](void *ptr) {
   FreeMem(ptr);
 }
 #else
-
-// Cannot inline on the host (defined in BBase.cpp)
+#if __cplusplus > 199711L
+// C++11 deprecates throw
 extern void *operator new(size_t size);
-
 extern void *operator new[](size_t size);
+#else
+// < C++11: throw not deprecated
+extern void *operator new(size_t size) throw(std::bad_alloc);
+extern void *operator new[](size_t size) throw(std::bad_alloc);
+#endif
 
-extern void operator delete(void *ptr);
+#ifdef __linux__
+extern void operator delete(void *ptr) _GLIBCXX_USE_NOEXCEPT;
 
-extern void operator delete[](void *ptr);
+extern void operator delete[](void *ptr) _GLIBCXX_USE_NOEXCEPT;
+#else
+extern void operator delete(void *ptr) throw();
+
+extern void operator delete[](void *ptr) throw();
+#endif
+
 
 #endif
 

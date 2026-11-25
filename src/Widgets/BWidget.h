@@ -31,6 +31,8 @@ public:
 
     void Deactivate() { mActive = EFalse; }
 
+    virtual TBool OnNavigate(TUint16 bits);
+
 public:
     TBool mActive;
     TInt mX, mY;

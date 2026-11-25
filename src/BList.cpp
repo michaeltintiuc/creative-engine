@@ -34,7 +34,13 @@ BList::BList() : BNode() { Reset(); }
  * Print a message if the list is not empty when it is deleted.
  */
 BList::~BList() {
-  //  if (next != this) printf("List not empty!");
+#ifndef PRODUCTION
+#if (defined(__XTENSA__) && defined(DEBUGME)) || !defined(__XTENSA__)
+   if (next != this) {
+     printf("List not empty!");
+   }
+#endif
+#endif
 }
 
 /**
@@ -96,7 +102,22 @@ BListPri::BListPri() : BNodePri(0) {
  * Print a message if the list is not empty when it is deleted.
  */
 BListPri::~BListPri() {
-  //  if (next != this) printf("List not empty!");
+#ifndef PRODUCTION
+#if (defined(__XTENSA__) && defined(DEBUGME)) || !defined(__XTENSA__)
+   if (next != this) {
+     printf("List not empty!");
+   }
+#endif
+#endif
+}
+
+void BListPri::Dump(BNodePri *stop) {
+  for (auto *s = First(); !End(s); s = Next(s)) {
+    printf("Node %p PRI(%d)\n", s, s->pri);
+    if (stop && s == stop) {
+      break;
+    }
+  }
 }
 
 void BListPri::AddTail(BNodePri &node) { node.InsertBeforeNode(this); }
@@ -135,7 +156,7 @@ void BListPri::RemoveNode(BNodePri *node) { node->Remove(); }
 
 void BListPri::Add(BNodePri &node) {
   for (BNodePri *n = First(); !End(n); n = n->next) {
-    if (node.pri >= n->pri) {
+    if (node.pri < n->pri) {
       node.InsertBeforeNode(n);
       return;
     }

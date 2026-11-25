@@ -31,9 +31,7 @@
 #include <limits.h>
 #endif
 
-#ifdef __XTENSA__
-#include "esp_heap_caps.h"
-#endif
+#include "Memory.h"
 
 #include "format.h"
 #include "list.h"
@@ -260,11 +258,8 @@ static char *get_dirname(char *name)
 
 	if ((div = strrchr(name, '/'))) {
 		len = div - name + 1;
-#ifdef __XTENSA__
-		dirname = (HIO_HANDLE *)heap_caps_malloc(len + 1, MALLOC_CAP_8BIT);
-#else
-		dirname = malloc(len + 1);
-#endif
+		dirname = (HIO_HANDLE *)AllocMem(len + 1, MALLOC_CAP_8BIT);
+
 		if (dirname != NULL) {
 			memcpy(dirname, name, len);
 			dirname[len] = 0;
@@ -405,41 +400,52 @@ static int load_module(xmp_context opaque, HIO_HANDLE *h)
 #endif
 
 	if (test_result < 0) {
-		free(m->basename);
-		free(m->dirname);
+		FreeMem(m->basename);
+		FreeMem(m->dirname);
+
 		return -XMP_ERROR_FORMAT;
 	}
 
 	if (load_result < 0) {
+    D_(D_WARN "load_result == %i -> err_load\n", load_result);
 		goto err_load;
 	}
 
 	/* Sanity check: number of channels, module length */
 	if (mod->chn > XMP_MAX_CHANNELS || mod->len > XMP_MAX_MOD_LENGTH) {
+//		printf("(mod->chn > XMP_MAX_CHANNELS || mod->len > XMP_MAX_MOD_LENGTH) -> err_load");
 		goto err_load;
 	}
 
 	/* Sanity check: channel pan */
 	for (i = 0; i < mod->chn; i++) {
 		if (mod->xxc[i].vol < 0 || mod->xxc[i].vol > 0xff) {
+//			printf("(mod->xxc[i].vol < 0 || mod->xxc[i].vol > 0xff) -> err_load\n");
 			goto err_load;
 		}
 		if (mod->xxc[i].pan < 0 || mod->xxc[i].pan > 0xff) {
+//			printf("mod->xxc[i].pan < 0 || mod->xxc[i].pan > 0xff -> err_load\n");
 			goto err_load;
 		}
 	}
 
 	/* Sanity check: patterns */
 	if (mod->xxp == NULL) {
+//		printf("mod->xxp == NULL -> err_load!\n");
 		goto err_load;
 	}
 	for (i = 0; i < mod->pat; i++) {
 		if (mod->xxp[i] == NULL) {
+//			printf("mod->xxp[%i] == NULL -> err_load", i);
 			goto err_load;
 		}
 		for (j = 0; j < mod->chn; j++) {
 			int t = mod->xxp[i]->index[j];
 			if (t < 0 || t >= mod->trk || mod->xxt[t] == NULL) {
+//				if (t<0) printf("t<0 (%i) -> err_load\n", t);
+//				if (t >= mod->trk) printf("t(%i) >= mod->trk(%i) -> err_load\n", t, mod->trk);
+//				if (mod->xxt[t] == NULL) printf("mod->xxt[%i] == NULL -> err_load\n", t);
+
 				goto err_load;
 			}
 		}
@@ -633,58 +639,58 @@ void xmp_release_module(xmp_context opaque)
 
 	if (mod->xxt != NULL) {
 		for (i = 0; i < mod->trk; i++) {
-			free(mod->xxt[i]);
+			FreeMem(mod->xxt[i]);
 		}
-		free(mod->xxt);
+		FreeMem(mod->xxt);
 	}
 
 	if (mod->xxp != NULL) {
 		for (i = 0; i < mod->pat; i++) {
-			free(mod->xxp[i]);
+			FreeMem(mod->xxp[i]);
 		}
-		free(mod->xxp);
+		FreeMem(mod->xxp);
 	}
 
 	if (mod->xxi != NULL) {
 		for (i = 0; i < mod->ins; i++) {
-			free(mod->xxi[i].sub);
-			free(mod->xxi[i].extra);
+			FreeMem(mod->xxi[i].sub);
+			FreeMem(mod->xxi[i].extra);
 		}
-		free(mod->xxi);
+		FreeMem(mod->xxi);
 	}
 
 	if (mod->xxs != NULL) {
 		for (i = 0; i < mod->smp; i++) {
 			if (mod->xxs[i].data != NULL) {
-				free(mod->xxs[i].data - 4);
+				FreeMem(mod->xxs[i].data - 4);
 			}
 		}
-		free(mod->xxs);
-		free(m->xtra);
+		FreeMem(mod->xxs);
+		FreeMem(m->xtra);
 	}
 
 #ifndef LIBXMP_CORE_DISABLE_IT
 	if (m->xsmp != NULL) {
 		for (i = 0; i < mod->smp; i++) {
 			if (m->xsmp[i].data != NULL) {
-				free(m->xsmp[i].data - 4);
+				FreeMem(m->xsmp[i].data - 4);
 			}
 		}
-		free(m->xsmp);
+		FreeMem(m->xsmp);
 	}
 #endif
 
 	if (m->scan_cnt) {
 		for (i = 0; i < mod->len; i++)
-			free(m->scan_cnt[i]);
-		free(m->scan_cnt);
+			FreeMem(m->scan_cnt[i]);
+		FreeMem(m->scan_cnt);
 	}
 
-	free(m->comment);
+	FreeMem(m->comment);
 
 	D_("free dirname/basename");
-	free(m->dirname);
-	free(m->basename);
+	FreeMem(m->dirname);
+	FreeMem(m->basename);
 }
 
 void xmp_scan_module(xmp_context opaque)

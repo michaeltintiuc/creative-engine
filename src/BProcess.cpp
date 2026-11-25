@@ -2,9 +2,12 @@
 
 // #define DEBUG_ME
 
-BProcessList gProcessList;
+// BProcessList gProcessList;
 
-BProcess::~BProcess() {}
+BProcess::~BProcess() {
+  mMessageList.Reset();
+  gEventEmitter.UnListenAll(this);
+}
 
 BProcessList::BProcessList() : BListPri() {
   mResetFlag = ETrue;

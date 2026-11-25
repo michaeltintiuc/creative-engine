@@ -83,6 +83,9 @@ cmake-build-debug/*
 cmake-build-release
 cmake-build-release/*
 tools/rcomp
+tools/stmdump
+tools/rcomp-src/rcomp
+tools/strdump-src/stmpdump
 *.o
 sdkconfig
 sdkconfig.old
@@ -91,8 +94,8 @@ CMake.Cache.txt
 cmake_install.cmake
 
 clion-log.txt
-test/Resources.bin
-test/Resources.h
+test/src/Resources.bin
+test/src/Resources.h
 test/Makefile
 *.store
 

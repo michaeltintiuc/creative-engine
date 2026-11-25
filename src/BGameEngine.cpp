@@ -1,5 +1,5 @@
 #include "BGameEngine.h"
-#include "Display.h"
+#include "Display/Display.h"
 #include "Controls.h"
 
 BGameEngine::BGameEngine(BViewPort *aViewPort) {
@@ -15,8 +15,10 @@ BGameEngine::BGameEngine(BViewPort *aViewPort) {
 BGameEngine::~BGameEngine() {
   // assure processes and sprites get freed
   Reset();
-  delete mPlayfield;
-  mPlayfield = ENull;
+  if (mPlayfield) {
+    delete mPlayfield;
+    mPlayfield = ENull;
+  }
 }
 
 // you can set viewport here for game area
@@ -34,45 +36,51 @@ void BGameEngine::PostRender() {
  *
  */
 void BGameEngine::Reset() {
-  gSpriteList.Reset();
-  gProcessList.Genocide();
+  mProcessList.Genocide();
+  mSpriteList.Reset();
 }
 
 void BGameEngine::AddProcess(BProcess *aProcess) {
-  gProcessList.AddProcess(aProcess);
+  mProcessList.AddProcess(aProcess);
 }
 
 void BGameEngine::RunProcessesBefore() {
-  gProcessList.RunBefore();
+  mProcessList.RunBefore();
 }
 
 void BGameEngine::RunProcessesAfter() {
-  gProcessList.RunAfter();
+  mProcessList.RunAfter();
 }
 
 void BGameEngine::GameLoop() {
-  gControls.Poll();
+  if (!mPauseFlag) {
+    gControls.Poll();
+  }
+
   mFrameCounter++;
   PreRender();
 
   if (mEnabled) {
     if (mPlayfield) {
-      // allow inheritor to set mWorldXX,mWorldYY as desired
-      PositionCamera();
       // animate the playfield
       mPlayfield->Animate();
+    }
 
+    if (!mPauseFlag) {
+      mSpriteList.Move();
+      mSpriteList.Animate();
+      mProcessList.RunBefore();
+    }
+    // allow inheritor to set mWorldXX,mWorldYY as desired
+    PositionCamera();
+
+    if (mPlayfield != ENull) {
       mPlayfield->Render();
     }
-    if (!mPauseFlag) {
-      gSpriteList.Move();
-      gSpriteList.Animate();
-      gProcessList.RunBefore();
-    }
-    gSpriteList.Render(mViewPort);
+    mSpriteList.Render(mViewPort);
 
     if (!mPauseFlag) {
-      gProcessList.RunAfter();
+      mProcessList.RunAfter();
     }
   }
 

@@ -4,18 +4,18 @@
 #include "BTypes.h"
 #include "BBase.h"
 #include "BPlayfield.h"
+#include "BMapPlayfield.h"
 #include "BSprite.h"
 #include "BAnimSprite.h"
 #include "BProcess.h"
-#include "Display.h"
-#include "Audio.h"
+#include "Display/Display.h"
 #include "BViewPort.h"
 
 /**
  * BGameEngine is the main class that implements the engine.
  */
 class BGameEngine : public BBase {
-  friend BPlayfield;
+  friend class BPlayfield;
 public:
   BGameEngine(BViewPort *aViewPort);
 
@@ -25,7 +25,7 @@ public:
   virtual void PreRender();               // called by GameLoop() before anything is done
   virtual void PositionCamera() {}        // called by GameLoop() before actual rendering is done
   virtual void PostRender();              // called by GameLoop() after rendering done, but before Update()
-  virtual void GameLoop();                // called once per GApplication's IdleRun()
+  virtual void GameLoop();                // called once per GApplication's main frames-per-second loop
 public:
   void AddProcess(BProcess *aProcess);
 
@@ -41,18 +41,21 @@ public:
     if (aSprite->flags & SFLAG_SORTX) {  // cause insertion sorted by X,Y
       aSprite->pri = (TInt(aSprite->x) << 16) + TInt(aSprite->y);
     }
-    gSpriteList.Add(*aSprite);
+    mSpriteList.Add(*aSprite);
   }
 
   void RemoveSprite(BSprite *aSprite) { aSprite->Remove(); }
 
-  void MoveSprites() { gSpriteList.Move(); }
+  void MoveSprites() { mSpriteList.Move(); }
 
-  void AnimateSprites() { gSpriteList.Animate(); }
+  void AnimateSprites() { mSpriteList.Animate(); }
 
-  void RenderSprites(BViewPort *aViewPort) { gSpriteList.Render(aViewPort); }
+  void RenderSprites(BViewPort *aViewPort) { mSpriteList.Render(aViewPort); }
 
-  void RenderSprites() { gSpriteList.Render(mViewPort); }
+  void RenderSprites() { mSpriteList.Render(mViewPort); }
+
+  // Signal all sprites
+  void Signal(TUint32 aSignals) { mSpriteList.Signal(aSignals); }
 
 public:
   void Pause() { mPauseFlag = ETrue; }         // no AI, just renders playfield/sprites
@@ -61,13 +64,15 @@ public:
 
 public:
   virtual void Reset();
- 
+
 protected:
   TBool mPauseFlag;
 public:
   TFloat mWorldXX, mWorldYY;
   TInt32 mFrameCounter;
   BPlayfield *mPlayfield;
+  BSpriteList mSpriteList;
+  BProcessList mProcessList;
 protected:
   TBool mEnabled;
 public:

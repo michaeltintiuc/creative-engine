@@ -5,9 +5,15 @@
 #include "BTypes.h"
 
 class BViewPort;
+
 class BBitmap;
+
 class BSpriteList;
 
+class BSpriteSheet;
+
+
+// bits for the sprite's type member
 const TUint32 STYPE_DEFAULT = (0 << 0); // ordinary sprite
 const TUint32 STYPE_PLAYER = (1 << 0);  // sprite of player
 const TUint32 STYPE_PBULLET = (1 << 1); // sprite of player bullet
@@ -15,6 +21,7 @@ const TUint32 STYPE_ENEMY = (1 << 2);   // sprite of enemy
 const TUint32 STYPE_EBULLET = (1 << 3); // sprite of enemy bullet
 const TUint32 STYPE_USER_BIT = 4;       // programmer adds types starting here
 
+// bits that can be set or cleared in the flags member
 const TUint32 SFLAG_CLIPPED = (1 << 0); // sprite was totally clipped
 const TUint32 SFLAG_MOVE = (1 << 1);    // sprite will be moved
 const TUint32 SFLAG_ANIMATE = (1 << 2); // sprite will be animated
@@ -25,7 +32,6 @@ const TUint32 SFLAG_FLIP = (1 << 6);    // sprite will be rendered flipped
 const TUint32 SFLAG_FLOP = (1 << 7);    // sprite will be rendered flopped
 const TUint32 SFLAG_RIGHT = (1 << 8);   // sprite will be rendered rotated right
 const TUint32 SFLAG_LEFT = (1 << 9);    // sprite will be rendered rotated left
-// after moved:
 const TUint32 SFLAG_SORTX = (1 << 10);   // sprite will be sorted in Y,X
 const TUint32 SFLAG_SORTY = (1 << 11);   // sprite will be sorted in X,Y
 const TUint32 SFLAG_SORTPRI = (1 << 12); // sprite will be sorted by priority
@@ -50,8 +56,7 @@ const TUint32 SFLAG_Y180 = SFLAG_FLIP;
 const TUint32 SFLAG_Z180 = SFLAG_FLIP | SFLAG_FLOP;
 const TUint32 SFLAG_Z90R = SFLAG_RIGHT;
 const TUint32 SFLAG_Z90L = SFLAG_LEFT;
-const TUint32 SFLAG_NORMAL =
-    ~(SFLAG_FLIP | SFLAG_FLOP | SFLAG_RIGHT | SFLAG_LEFT); // AND to make normal
+const TUint32 SFLAG_NORMAL = ~(SFLAG_FLIP | SFLAG_FLOP | SFLAG_RIGHT | SFLAG_LEFT); // AND to make normal
 
 /**
 * \brief BSprite is an ordinary Sprite implementation.Sprites are kept in a sorted
@@ -104,58 +109,148 @@ const TUint32 SFLAG_NORMAL =
 */
 struct BSprite : public BNodePri {
 public:
-  BSprite(TInt aPri, TUint16 bm, TUint16 img = 0,
-          TUint32 aType = STYPE_DEFAULT);
-  BSprite(TInt aPri, TUint16 bm, TRect rect,
-          TUint32 aType = STYPE_DEFAULT);
-  virtual ~BSprite() {}
+  BSprite(TInt aPri, TUint16 bm, TUint16 img = 0, TUint32 aType = STYPE_DEFAULT);
+
+  BSprite(TInt aPri, TUint16 bm, TRect rect, TUint32 aType = STYPE_DEFAULT);
+
+  ~BSprite() OVERRIDE;
 
 public:
   TBool Clipped() { return TBool(flags & SFLAG_CLIPPED); }
+
+  // shortcut inline methods to deal with flags bits
+  void SetFlags(TUint32 aFlags) { flags |= aFlags; }
+
+  void ClearFlags(TUint32 aFlags) { flags &= ~aFlags; }
+
+  TBool TestFlags(TUint32 aFlags) { return flags & aFlags; }
+
+  TBool TestAndClearFlags(TUint32 aFlags) {
+    if (TestFlags(aFlags)) {
+      ClearFlags(aFlags);
+      return ETrue;
+    }
+    return EFalse;
+  }
+
+  // shortcut inline methods to deal with cType bits
+  void SetCType(TUint32 aFlags) { cType |= aFlags; }
+
+  void ClearCType(TUint32 aFlags) { cType &= ~aFlags; }
+
+  TBool TestCType(TUint32 aFlags) { return cType & aFlags; }
+
+  TBool TestAndClearCType(TUint32 aType) {
+    if (TestCType(aType)) {
+      ClearCType(aType);
+      return ETrue;
+    }
+    return EFalse;
+  }
+
+  // shortcut inline methods to deal with cType bits
+  void SetCMask(TUint32 aFlags) { cMask |= aFlags; }
+
+  void ClearCMask(TUint32 aFlags) { cMask &= ~aFlags; }
+
+  TBool TestCMask(TUint32 aFlags) { return cMask & aFlags; }
+
+  TBool TestAndClearCMask(TUint32 aType) {
+    if (TestCMask(aType)) {
+      ClearCMask(aType);
+      return ETrue;
+    }
+    return EFalse;
+  }
+
+  // shortcut inline method to deal with signals
+  void SetSignal(TUint32 aSignals) { mSignals |= aSignals; }
+
+  void ClearSignal(TUint32 aSignals) { mSignals &= ~aSignals; }
+
+  TBool TestSignal(TUint32 aSignals) { return mSignals & aSignals; }
+
+  TBool TestAndClearSignals(TUint32 aSignals) {
+    if (TestSignal(aSignals)) {
+      ClearSignal(aSignals);
+      return ETrue;
+    }
+    return EFalse;
+  }
+
+public:
   virtual void GetRect(TRect &aRect); // gets collision rectangle
+
 public:
   virtual void Move();
+
   virtual void Animate();
+
   virtual void Collide(BSprite *aOther);
+
   virtual TBool Render(BViewPort *aViewPort);
-  static TBool DrawSprite(BViewPort *aViewPort, TInt16 aBitmapSlot, TInt aImageNumber, TInt aX, TInt aY, TUint32 aFlags=0);
+
+  static TBool
+  DrawSprite(BViewPort *aViewPort, TInt16 aBitmapSlot, TInt aImageNumber, TInt aX, TInt aY, TUint32 aFlags = 0);
+  void Fill(TInt16 aFill) { mFill = aFill; };
 
 public:
   TUint32 type, flags;
   TUint32 cMask, cType; // for collisions
   TFloat x, y;
   TFloat vx, vy;
-  TUint16 w, h;
+  TInt16 cx, cy, w, h; // collision rectangle
   TUint16 mBitmapSlot, mImageNumber;
   TRect mRect;
   BBitmap *mBitmap;
+  BSpriteSheet *mSpriteSheet;
+  TUint32 mSignals; // arbitrary signal bits (for events)
+  TInt16 mFill = -1;
 };
 
 class BSpriteList : public BListPri {
 public:
   BSpriteList();
-  virtual ~BSpriteList();
-  void Reset();
+
+  ~BSpriteList();
+
+  void Reset() OVERRIDE;
+  void Dump();
 
 public:
-  BSprite *RemHead() { return (BSprite *)BListPri::RemHead(); }
-  BSprite *First() { return (BSprite *)next; }
-  BSprite *Next(BSprite *curr) { return (BSprite *)curr->next; }
-  BSprite *Last() { return (BSprite *)prev; }
+  BSprite *RemHead() OVERRIDE { return (BSprite *)BListPri::RemHead(); }
+
+  BSprite *First() OVERRIDE { return (BSprite *)next; }
+
+  BSprite *Next(BSprite *curr)  { return (BSprite *)curr->next; }
+
+  BSprite *Last() OVERRIDE { return (BSprite *)prev; }
+
   BSprite *Prev(BSprite *curr) { return (BSprite *)curr->prev; }
+
   TBool End(BSprite *curr) { return curr == (BSprite *)this; }
 
 public:
+  void Signal(TUint32 aSignal);
+
+public:
+
   void Move();
+
+  bool ChkPriOrder();
+
   void Animate();
+
   void Render(BViewPort *aViewPort);
+
   void MultipleCollisions(TBool aFlag) { mMultipleCollisions = aFlag; }
+
   TBool MultipleCollisions() { return mMultipleCollisions; }
 
 protected:
   TBool mMultipleCollisions;
 };
 
-extern BSpriteList gSpriteList;
+// extern BSpriteList gSpriteList;
 
 #endif

@@ -1,6 +1,8 @@
 #ifndef LIBXMP_COMMON_H
 #define LIBXMP_COMMON_H
 
+#include "../Memory.h"
+
 #ifdef __AROS__
 #define __AMIGA__
 #endif
@@ -115,6 +117,7 @@ void __inline CLIB_DECL D_(const char *text, ...) { do {} while (0); }
 
 #else
 
+//#define DEBUG
 #ifdef DEBUG
 #define D_INFO "\x1b[33m"
 #define D_CRIT "\x1b[31m"

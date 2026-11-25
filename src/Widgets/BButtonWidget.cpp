@@ -1,5 +1,5 @@
 #include "BButtonWidget.h"
-#include "Display.h"
+#include "Display/Display.h"
 #include "Controls.h"
 #include <strings.h>
 
@@ -29,7 +29,7 @@ TInt BButtonWidget::Render(TInt aX, TInt aY) {
 }
 
 void BButtonWidget::Run() {
-  if (IsActive() && gControls.WasPressed(BUTTONA)) {
+  if (IsActive() && gControls.WasPressed(BUTTONA | BUTTONB | BUTTON_START)) {
     Select();
   }
 }

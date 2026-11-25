@@ -1,4 +1,6 @@
 #include "BBitmap.h"
+//#include <Display/Display.h>
+#include "BViewPort.h"
 #include <cstring>
 #include "Panic.h"
 #include "BFont.h"
@@ -11,20 +13,43 @@
 
 #endif
 
+#ifndef SCREEN_WIDTH
+#define SCREEN_WIDTH 320
+#define SCREEN_HEIGHT 240
+#define SCREEN_DEPTH 8
+#endif
+
+#define RLE
+
+BBitmap *BBitmap::CreateBBitmap(TUint aWidth, TUint aHeight, TUint aDepth, TUint16 aMemoryFlag) {
+  if (aDepth != 8) {
+    Panic("CreateBBitmap Unsupported depth %d", aDepth);
+  }
+  return new BBitmap(aWidth, aHeight, aDepth, aMemoryFlag);
+}
+
+BBitmap *BBitmap::CreateBBitmap(TAny *aRom, TUint16 aMemoryFlag) {
+  return new BBitmap(aRom, aMemoryFlag);
+}
+
 BBitmap::BBitmap(TUint aWidth, TUint aHeight, TUint aDepth, TUint16 aMemoryType) {
-  mROM              = EFalse;
-  mWidth            = aWidth;
-  mHeight           = aHeight;
-  mDepth            = aDepth;
-  mPitch            = mWidth;
-  mColors           = 256;
-  mPalette          = new TRGB[mColors];
-  mPixels           = (TUint8 *) AllocMem(mWidth * mHeight, aMemoryType);
+  mROM = EFalse;
+  mWidth = aWidth;
+  mHeight = aHeight;
+  mDepth = aDepth;
+  mPitch = mWidth;
+  mColors = 256;
+  mPalette = new TRGB[mColors];
+  mPixels = (TUint8 *)AllocMem((mWidth * mHeight) * sizeof(TUint8), aMemoryType);
   mTransparentColor = -1;
 
   mDimensions.x1 = mDimensions.y1 = 0;
   mDimensions.x2 = mWidth - 1;
   mDimensions.y2 = mHeight - 1;
+
+  for (TInt i = 0; i < 256; i++) {
+    mColorsUsed[i] = ENull;
+  }
 }
 
 /**
@@ -32,18 +57,24 @@ BBitmap::BBitmap(TUint aWidth, TUint aHeight, TUint aDepth, TUint16 aMemoryType)
  */
 struct ROMBitmap {
   TUint16 width, height, depth, bytesPerRow, paletteSize;
-  TUint8  palette[1];
+  TUint8 palette[1];
 };
 
-BBitmap::BBitmap(TAny *aROM, TUint16 aMemoryType) {
-  auto *bmp = (ROMBitmap *) aROM;
+static TBool once = EFalse;
 
-  mROM     = ETrue;
-  mWidth   = bmp->width;
-  mHeight  = bmp->height;
-  mDepth   = bmp->depth;
-  mPitch   = bmp->bytesPerRow;
-  mColors  = bmp->paletteSize;
+BBitmap::BBitmap(TAny *aROM, TUint16 aMemoryType) {
+  auto *bmp = (ROMBitmap *)aROM;
+
+  for (TInt i = 0; i < 256; i++) {
+    mColorsUsed[i] = EFalse;
+  }
+
+  mROM = ETrue;
+  mWidth = bmp->width;
+  mHeight = bmp->height;
+  mDepth = bmp->depth;
+  mPitch = bmp->bytesPerRow;
+  mColors = bmp->paletteSize;
   mPalette = new TRGB[bmp->paletteSize];
   if (!mPalette) {
     Panic("Cannot allocate mPalette\n");
@@ -54,8 +85,8 @@ BBitmap::BBitmap(TAny *aROM, TUint16 aMemoryType) {
   mDimensions.y2 = mHeight - 1;
 
   mTransparentColor = -1;
-  TUint8    *ptr = &bmp->palette[0];
-  for (TInt i    = 0; i < bmp->paletteSize * 3; i += 3) {
+  TUint8 *ptr = &bmp->palette[0];
+  for (TInt i = 0; i < bmp->paletteSize * 3; i += 3) {
     const TUint8 r = *ptr++;
     const TUint8 g = *ptr++;
     const TUint8 b = *ptr++;
@@ -65,263 +96,347 @@ BBitmap::BBitmap(TAny *aROM, TUint16 aMemoryType) {
     }
   }
 
-  mPixels = (TUint8 *) AllocMem(mWidth * mHeight, aMemoryType);
+  mPixels = (TUint8 *)AllocMem((mWidth * mHeight) * sizeof(TUint8), aMemoryType);
   if (!mPixels) {
     Panic("Cannot allocate mPixels\n");
   }
-  TUint8    *dst = mPixels;
-  for (TInt i    = 0; i < mHeight * mPitch; i++) {
-    *dst++ = *ptr++;
+#ifdef RLE
+  TUint8 *dst = mPixels;
+  TInt length = mWidth * mHeight;
+  while (length > 0) {
+    TInt8 count = *ptr++;
+    if (count & 0x80) {
+      count &= 0x7f;
+      count++;
+#ifdef DEBUGME
+      if (!once) {
+        printf("rle run ");
+      }
+#endif
+      for (TUint8 i = 0; i < count; i++) {
+#ifdef DEBUGME
+        if (!once) {
+          printf("%02x ", *ptr);
+        }
+#endif
+        TUint8 color = *ptr++;
+        mColorsUsed[color] = ETrue;
+        *dst++ = color;
+        length--;
+      }
+#ifdef DEBUGME
+      if (!once) {
+        printf(" => rle %d length %d\n", count, length);
+      }
+#endif
+    }
+    else {
+      count &= 0x7f;
+      count++;
+      TUint8 byte = *ptr++;
+      mColorsUsed[byte] = ETrue;
+      for (TUint8 i = 0; i < count; i++) {
+        *dst++ = byte;
+        length--;
+      }
+#ifdef DEBUGME
+      if (!once) {
+        printf("rle dup %3d %02x length %d\n", count, byte, length);
+      }
+#endif
+    }
   }
+  once = ETrue;
+#else
+  TUint8 *dst = mPixels;
+
+  for (TInt i = 0; i < mHeight * mPitch; i++) {
+    TUint8 color = *ptr++;
+    mColorsUsed[color] = ETrue;
+    *dst++ = color;
+  }
+#endif
 }
 
 BBitmap::~BBitmap() {
-  delete[] mPixels;
+  FreeMem(mPixels);
   mPixels = ENull;
   delete[] mPalette;
   mPalette = ENull;
 }
 
 void BBitmap::Dump() {
+#ifndef PRODUCTION
+#if (defined(__XTENSA__) && defined(DEBUGME)) || !defined(__XTENSA__)
   printf("mRom: %d\n", mROM);
-  printf("mWidth: %d, mHeight: %d, mDepth: %d, mPitch: %d\n", mWidth, mHeight, mDepth, mPitch);
+  printf("mWidth: %d, mHeight: %d, mDepth: %d, mPitch: %d\n", mWidth, mHeight,
+      mDepth, mPitch);
   printf("mPixels: %s\n", mPixels);
   printf("mColors: %d, mPalette: %p\n", mColors, mPalette);
   for (TInt c = 0; c < mColors; c++) {
     printf("%3d ", c);
     mPalette[c].Dump();
   }
+#endif
+#endif
+}
+
+TInt BBitmap::NextUnusedColor() {
+  for (TInt i = 0; i < 256; i++) {
+    if (!mColorsUsed[i]) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+TInt BBitmap::FindColor(const TRGB &aColor) {
+  for (TInt ndx = 0; ndx < 256; ndx++) {
+    if (mColorsUsed[ndx] && mPalette[ndx] == aColor) {
+      return ndx;
+    }
+  }
+  return -1;
+}
+
+// add aStartColor (it's an offset) to each pixel
+// copy palette from 0 to aStartColor (index) for the number of colors
+void BBitmap::Remap(BBitmap *aOther) {
+  TRGB transparent(255, 0, 255);
+  mTransparentColor = -1;
+
+  TInt16 remap[256];
+  for (TInt i = 0; i < 256; i++) {
+    remap[i] = -1;
+  }
+
+  for (TInt y = 0; y < mHeight; y++) {
+    for (TInt x = 0; x < mWidth; x++) {
+      TInt pixel = ReadPixel(x, y);
+      if (remap[pixel] != -1) {
+        WritePixel(x, y, remap[pixel]);
+      }
+      else {
+        TRGB &color = ReadColor(x, y);
+        TInt found = aOther->FindColor(color);
+        if (found != -1) {
+          remap[pixel] = found;
+          if (mTransparentColor == -1 && color == transparent) {
+            mTransparentColor = found;
+          }
+          WritePixel(x, y, found);
+        }
+        else {
+          found = aOther->NextUnusedColor();
+          if (found == -1) {
+            Panic("Can't remap BBitmap: out of colors\n");
+          }
+
+          if (mTransparentColor == -1 && color == transparent) {
+            mTransparentColor = found;
+          }
+          remap[pixel] = found;
+          WritePixel(x, y, found);
+          aOther->UseColor(found);
+          aOther->SetColor(found, color);
+        }
+      }
+    }
+  }
+}
+
+TInt BBitmap::CountUsedColors() {
+  TInt count = 0;
+  for (TInt i = 0; i < 256; i++) {
+    if (mColorsUsed[i]) {
+      count++;
+    }
+  }
+  return count;
+}
+
+TInt BBitmap::CountColors() {
+  TBool used[256];
+  TInt count = 0;
+  for (TInt i = 0; i < 256; i++) {
+    used[i] = EFalse;
+  }
+  for (TInt y = 0; y < mHeight; y++) {
+    for (TInt x = 0; x < mWidth; x++) {
+      TUint8 color = ReadPixel(x, y);
+      if (!used[color]) {
+        used[color] = ETrue;
+        count++;
+      }
+    }
+  }
+  return count;
 }
 
 void BBitmap::SetPalette(TRGB aPalette[], TInt aIndex, TInt aCount) {
-  TInt      cnt = MIN(mColors, aCount);
-  for (TInt i   = 0; i < cnt; i++) {
+  TInt cnt = MIN(mColors, aCount);
+  for (TInt i = 0; i < cnt; i++) {
     mPalette[aIndex + i].Set(aPalette[aIndex + i]);
   }
 }
 
 TBool BBitmap::DrawBitmap(BViewPort *aViewPort, BBitmap *aSrcBitmap, TRect aSrcRect, TInt aX, TInt aY, TUint32 aFlags) {
-  TInt viewPortOffsetX = 0, viewPortOffsetY = 0;
+  TUint8 *pixels;
+  TRect clipRect, spriteRect;
+  TInt nextRow,
+      viewPortOffsetX = 0,
+      viewPortOffsetY = 0,
+      incX = 1,
+      incY = 1;
 
-  TRect clipRect;
   if (aViewPort) {
     aViewPort->GetRect(clipRect);
     viewPortOffsetX = TInt(round(aViewPort->mOffsetX));
     viewPortOffsetY = TInt(round(aViewPort->mOffsetY));
-  } else {
-    clipRect.Set(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+  }
+  else {
+    clipRect.Set(0, 0, SCREEN_WIDTH - 1, SCREEN_HEIGHT - 1);
   }
 
-  // Clamp x, y coords
-  const TInt clampX = MIN(0, aX);
-  const TInt clampY = MIN(0, aY);
+  TInt destX = MAX(0, aX) + viewPortOffsetX,
+       destY = MAX(0, aY) + viewPortOffsetY;
 
-  // Calculate clipped width and height
-  const TInt clipW = aSrcRect.x1 < 0 ? aSrcRect.x2 : aSrcRect.Width();
-  const TInt clipH = aSrcRect.y1 < 0 ? aSrcRect.y2 : aSrcRect.Height();
-
-  // Calculate drawable width and height
-  const TInt w = TBool(aFlags & DRAW_ROTATE_RIGHT) ^ TBool(aFlags & DRAW_ROTATE_LEFT)
-                 ? (clipH + clampX) - MAX(0, (clipH + aX) - clipRect.x2 + viewPortOffsetX)
-                 : (clipW + clampX) - MAX(0, (clipW + aX) - clipRect.x2 + viewPortOffsetX);
-
-  const TInt h        = TBool(aFlags & DRAW_ROTATE_RIGHT) ^ TBool(aFlags & DRAW_ROTATE_LEFT)
-                        ? (clipW + clampY) - MAX(0, (clipW + aY) - clipRect.y2 + viewPortOffsetY)
-                        : (clipH + clampY) - MAX(0, (clipH + aY) - clipRect.y2 + viewPortOffsetY);
-
-  // Return if the sprite to be drawn can not be seen
-  if (w < 1 || h < 1) {
-    return EFalse;
-  }
-
-  TUint8        *pixels;
-  const TUint32 pitch = this->mPitch;
-
-  // Init source x,y coordinates
-  const TInt sx = (aSrcRect.x1 < 0 ? aSrcRect.x1 : aSrcRect.x1 * -1) + clampX;
-  const TInt sy = (aSrcRect.y1 < 0 ? aSrcRect.y1 : aSrcRect.y1 * -1) + clampY;
-
-  // Init destination x,y coordinates
-  const TInt dx = (aX < 0 ? 0 : aX) + viewPortOffsetX;
-  const TInt dy = (aY < 0 ? 0 : aY) + viewPortOffsetY;
-
-  // Calculate sprite delta width and height
-  const TInt deltaImageWidth = TBool(aFlags & DRAW_ROTATE_RIGHT) ^ TBool(aFlags & DRAW_ROTATE_LEFT)
-                               ? (aX < 0 ? -aSrcRect.Height() + w : aSrcRect.Height() - w) - 1
-                               : (aX < 0 ? -aSrcRect.Width() + w : aSrcRect.Width() - w) - 1;
-
-  const TInt deltaImageHeight = TBool(aFlags & DRAW_ROTATE_RIGHT) ^ TBool(aFlags & DRAW_ROTATE_LEFT)
-                                ? (aY < 0 ? -aSrcRect.Width() + h : aSrcRect.Width() - h) - 1
-                                : (aY < 0 ? -aSrcRect.Height() + h : aSrcRect.Height() - h) - 1;
-
-  // Calculate visible width and height to iterate over
-  const TInt i = -sy + h;
-  const TInt j = -sx + w;
-
-  if (aFlags & DRAW_FLIPPED) {
+  // rotations (x, y are switched)
+  if (aFlags & (DRAW_ROTATE_LEFT | DRAW_ROTATE_RIGHT)) {
     if (aFlags & DRAW_FLOPPED) {
-      if (aFlags & DRAW_ROTATE_LEFT && !(aFlags & DRAW_ROTATE_RIGHT)) {
-        // flip and flop and rotate left
-        for (TInt yy = -sy, dyy = dy; yy < i; yy++, dyy++) {
-          pixels = &this->mPixels[dyy * pitch + dx];
-
-          for (TInt xx = -sx, dxx = dx, rsx = w + xx + deltaImageWidth; xx < j; xx++, dxx++, rsx--) {
-            // Read pixel value from bitmap
-            TUint8 pix = aSrcBitmap->ReadPixel(yy, rsx);
-
-            // Write pixel values
-            *pixels++ = pix;
-          }
+      if (aFlags & DRAW_FLIPPED) {
+        if (aFlags & DRAW_ROTATE_LEFT) {
+          // rotate left, flipped, flopped = rotate right
+          aFlags = DRAW_ROTATE_RIGHT;
         }
-      } else if (aFlags & DRAW_ROTATE_RIGHT && !(aFlags & DRAW_ROTATE_LEFT)) {
-        // flip and flop and rotate right
-        for (TInt yy = -sy, dyy = dy, rsy = h + yy + deltaImageHeight; yy < i; yy++, dyy++, rsy--) {
-          pixels = &this->mPixels[dyy * pitch + dx];
-
-          for (TInt xx = -sx, dxx = dx; xx < j; xx++, dxx++) {
-            // Read pixel value from bitmap
-            TUint8 pix = aSrcBitmap->ReadPixel(rsy, xx);
-
-            // Write pixel values
-            *pixels++ = pix;
-          }
-        }
-      } else {
-        // flipped and flopped
-        for (TInt yy = -sy, dyy = dy, fsy = h + yy + deltaImageHeight; yy < i; yy++, dyy++, fsy--) {
-          pixels = &this->mPixels[dyy * pitch + dx];
-
-          for (TInt xx = -sx, dxx = dx, fsx = w + xx + deltaImageWidth; xx < j; xx++, dxx++, fsx--) {
-            // Read pixel value from bitmap
-            TUint8 pix = aSrcBitmap->ReadPixel(fsx, fsy);
-
-            // Write pixel values
-            *pixels++ = pix;
-          }
+        else if (aFlags & DRAW_ROTATE_RIGHT) {
+          // rotate right, flipped, flopped = rotate left
+          aFlags = DRAW_ROTATE_LEFT;
         }
       }
-    } else {
-      if (aFlags & DRAW_ROTATE_LEFT && !(aFlags & DRAW_ROTATE_RIGHT)) {
+      else {
+        if (aFlags & DRAW_ROTATE_LEFT) {
+          // rotate left, flopped = rotate right, flipped
+          aFlags = DRAW_ROTATE_RIGHT | DRAW_FLIPPED;
+        }
+        else if (aFlags & DRAW_ROTATE_RIGHT) {
+          // rotate right, flopped = rotate left, flipped
+          aFlags = DRAW_ROTATE_LEFT | DRAW_FLIPPED;
+        }
+      }
+    }
+
+    if (aFlags & DRAW_FLIPPED) {
+      if (aFlags & DRAW_ROTATE_LEFT) {
         // flip and rotate left
-        for (TInt yy = -sy, dyy = dy; yy < i; yy++, dyy++) {
-          pixels = &this->mPixels[dyy * pitch + dx];
-
-          for (TInt xx = -sx, dxx = dx; xx < j; xx++, dxx++) {
-            // Read pixel value from bitmap
-            TUint8 pix = aSrcBitmap->ReadPixel(yy, xx);
-
-            // Write pixel values
-            *pixels++ = pix;
-          }
-        }
-      } else if (aFlags & DRAW_ROTATE_RIGHT && !(aFlags & DRAW_ROTATE_LEFT)) {
+        incX = -1;
+        incY = -1;
+        destX = MIN(clipRect.x2, aX + aSrcRect.Width() - 1 + viewPortOffsetX);
+        destY = MIN(clipRect.y2, aY + aSrcRect.Height() - 1 + viewPortOffsetY);
+        spriteRect.Set(
+            aSrcRect.y1 - MIN(0, clipRect.Width() - aX - aSrcRect.Width()),
+            aSrcRect.x1 - MIN(0, clipRect.Height() - aY - aSrcRect.Height()),
+            aSrcRect.y2 - MAX(0, clipRect.x1 - aX - viewPortOffsetX - 1),
+            aSrcRect.x2 - MAX(0, clipRect.y1 - aY - viewPortOffsetY - 1));
+      }
+      else {
         // flip and rotate right
-        for (TInt yy = -sy, dyy = dy, rsy = h + yy + deltaImageHeight; yy < i; yy++, dyy++, rsy--) {
-          pixels = &this->mPixels[dyy * pitch + dx];
-
-          for (TInt xx = -sx, dxx = dx, fsx = w + xx + deltaImageWidth; xx < j; xx++, dxx++, fsx--) {
-            // Read pixel value from bitmap
-            TUint8 pix = aSrcBitmap->ReadPixel(rsy, fsx);
-
-            // Write pixel values
-            *pixels++ = pix;
-          }
-        }
-      } else {
-        // flipped
-        for (TInt yy = -sy, dyy = dy; yy < i; yy++, dyy++) {
-          pixels = &this->mPixels[dyy * pitch + dx];
-
-          for (TInt xx = -sx, dxx = dx, fsx = w + xx + deltaImageWidth; xx < j; xx++, dxx++, fsx--) {
-            // Read pixel value from bitmap
-            TUint8 pix = aSrcBitmap->ReadPixel(fsx, yy);
-
-            // Write pixel values
-            *pixels++ = pix;
-          }
-        }
+        spriteRect.Set(
+            aSrcRect.y1 + MAX(0, clipRect.x1 - aX - viewPortOffsetX),
+            aSrcRect.x1 + MAX(0, clipRect.y1 - aY - viewPortOffsetY),
+            aSrcRect.y2 + MIN(0, clipRect.Width() - aX - aSrcRect.Width() + 1),
+            aSrcRect.x2 + MIN(0, clipRect.Height() - aY - aSrcRect.Height() + 1));
       }
     }
-  } else if (aFlags & DRAW_FLOPPED) {
-    if (aFlags & DRAW_ROTATE_LEFT && !(aFlags & DRAW_ROTATE_RIGHT)) {
-      // flop and rotate left
-      for (TInt yy = -sy, dyy = dy, fsy = h + yy + deltaImageHeight; yy < i; yy++, dyy++, fsy--) {
-        pixels = &this->mPixels[dyy * pitch + dx];
-
-        for (TInt xx = -sx, dxx = dx, rsx = w + xx + deltaImageWidth; xx < j; xx++, dxx++, rsx--) {
-          // Read pixel value from bitmap
-          TUint8 pix = aSrcBitmap->ReadPixel(fsy, rsx);
-
-          // Write pixel values
-          *pixels++ = pix;
-        }
-      }
-    } else if (aFlags & DRAW_ROTATE_RIGHT && !(aFlags & DRAW_ROTATE_LEFT)) {
-      // flop and rotate right
-      for (TInt yy = -sy, dyy = dy; yy < i; yy++, dyy++) {
-        pixels = &this->mPixels[dyy * pitch + dx];
-
-        for (TInt xx = -sx, dxx = dx; xx < j; xx++, dxx++) {
-          // Read pixel value from bitmap
-          TUint8 pix = aSrcBitmap->ReadPixel(yy, xx);
-
-          // Write pixel values
-          *pixels++ = pix;
-        }
-      }
-    } else {
-      // flopped
-      for (TInt yy = -sy, dyy = dy, fsy = h + yy + deltaImageHeight; yy < i; yy++, dyy++, fsy--) {
-        pixels = &this->mPixels[dyy * pitch + dx];
-
-        for (TInt xx = -sx, dxx = dx; xx < j; xx++, dxx++) {
-          // Read pixel value from bitmap
-          TUint8 pix = aSrcBitmap->ReadPixel(xx, fsy);
-
-          // Write pixel values
-          *pixels++ = pix;
-        }
-      }
-    }
-  } else {
-    if (aFlags & DRAW_ROTATE_LEFT && !(aFlags & DRAW_ROTATE_RIGHT)) {
+    else if (aFlags & DRAW_ROTATE_LEFT) {
       // rotate left
-      for (TInt yy = -sy, dyy = dy, rsy = h + yy + deltaImageHeight; yy < i; yy++, dyy++, rsy--) {
-        pixels = &this->mPixels[dyy * pitch + dx];
-
-        for (TInt xx = -sx, dxx = dx; xx < j; xx++, dxx++) {
-          // Read pixel value from bitmap
-          TUint8 pix = aSrcBitmap->ReadPixel(rsy, xx);
-
-          // Write pixel values
-          *pixels++ = pix;
-        }
-      }
-    } else if (aFlags & DRAW_ROTATE_RIGHT && !(aFlags & DRAW_ROTATE_LEFT)) {
+      incY = -1;
+      destY = MIN(clipRect.y2, aY + aSrcRect.Height() - 1 + viewPortOffsetY);
+      spriteRect.Set(
+          aSrcRect.y1 + MAX(0, clipRect.x1 - aX - viewPortOffsetX),
+          aSrcRect.x1 - MIN(0, clipRect.Height() - aY - aSrcRect.Height()),
+          aSrcRect.y2 + MIN(0, clipRect.Width() - aX - aSrcRect.Width() + 1),
+          aSrcRect.x2 - MAX(0, clipRect.y1 - aY - viewPortOffsetY - 1));
+    }
+    else {
       // rotate right
-      for (TInt yy = -sy, dyy = dy; yy < i; yy++, dyy++) {
-        pixels = &this->mPixels[dyy * pitch + dx];
+      incX = -1;
+      destX = MIN(clipRect.x2, aX + aSrcRect.Width() - 1 + viewPortOffsetX);
+      spriteRect.Set(
+          aSrcRect.y1 - MIN(0, clipRect.Width() - aX - aSrcRect.Width()),
+          aSrcRect.x1 + MAX(0, clipRect.y1 - aY - viewPortOffsetY),
+          aSrcRect.y2 - MAX(0, clipRect.x1 - aX - viewPortOffsetX - 1),
+          aSrcRect.x2 + MIN(0, clipRect.Height() - aY - aSrcRect.Height() + 1));
+    }
 
-        for (TInt xx = -sx, dxx = dx, rsx = w + xx + deltaImageWidth; xx < j; xx++, dxx++, rsx--) {
-          // Read pixel value from bitmap
-          TUint8 pix = aSrcBitmap->ReadPixel(yy, rsx);
+    if (spriteRect.Width() <= 1 || spriteRect.Height() <= 1) {
+      return EFalse;
+    }
 
-          // Write pixel values
-          *pixels++ = pix;
-        }
+    pixels = &this->mPixels[destY * mPitch + destX];
+    nextRow = (mPitch * incY) - ((spriteRect.Width() - 1) * incX);
+
+    for (TInt y = spriteRect.y1; y < spriteRect.y2; y++, pixels += nextRow) {
+      for (TInt x = spriteRect.x1; x < spriteRect.x2; x++, pixels += incX) {
+        *pixels = aSrcBitmap->ReadPixel(y, x);
       }
-    } else {
-      // just draw
-      for (TInt yy = -sy, dyy = dy; yy < i; yy++, dyy++) {
-        pixels = &this->mPixels[dyy * pitch + dx];
+    }
+  }
+  else {
+    // no rotations
+    if (aFlags & DRAW_FLIPPED) {
+      if (aFlags & DRAW_FLOPPED) {
+        // flipped and flopped
+        incX = -1;
+        incY = -1;
+        destX = MIN(clipRect.x2, aX + aSrcRect.Width() - 1 + viewPortOffsetX);
+        destY = MIN(clipRect.y2, aY + aSrcRect.Height() - 1 + viewPortOffsetY);
+        spriteRect.Set(
+            aSrcRect.x1 - MIN(0, clipRect.Width() - aX - aSrcRect.Width()),
+            aSrcRect.y1 - MIN(0, clipRect.Height() - aY - aSrcRect.Height()),
+            aSrcRect.x2 - MAX(0, clipRect.x1 - aX - viewPortOffsetX - 1),
+            aSrcRect.y2 - MAX(0, clipRect.y1 - aY - viewPortOffsetY - 1));
+      }
+      else {
+        // flipped
+        incX = -1;
+        destX = MIN(clipRect.x2, aX + aSrcRect.Width() - 1 + viewPortOffsetX);
+        spriteRect.Set(
+            aSrcRect.x1 - MIN(0, clipRect.Width() - aX - aSrcRect.Width()),
+            aSrcRect.y1 + MAX(0, clipRect.y1 - aY - viewPortOffsetY),
+            aSrcRect.x2 - MAX(0, clipRect.x1 - aX - viewPortOffsetX - 1),
+            aSrcRect.y2 + MIN(0, clipRect.Height() - aY - aSrcRect.Height() + 1));
+      }
+    }
+    else if (aFlags & DRAW_FLOPPED) {
+      // flopped
+      incY = -1;
+      destY = MIN(clipRect.y2, aY + aSrcRect.Height() - 1 + viewPortOffsetY);
+      spriteRect.Set(
+          aSrcRect.x1 + MAX(0, clipRect.x1 - aX - viewPortOffsetX),
+          aSrcRect.y1 - MIN(0, clipRect.Height() - aY - aSrcRect.Height()),
+          aSrcRect.x2 + MIN(0, clipRect.Width() - aX - aSrcRect.Width() + 1),
+          aSrcRect.y2 - MAX(0, clipRect.y1 - aY - viewPortOffsetY - 1));
+    }
+    else {
+      // normal
+      spriteRect.Set(
+          aSrcRect.x1 + MAX(0, clipRect.x1 - aX - viewPortOffsetX),
+          aSrcRect.y1 + MAX(0, clipRect.y1 - aY - viewPortOffsetY),
+          aSrcRect.x2 + MIN(0, clipRect.Width() - aX - aSrcRect.Width() + 1),
+          aSrcRect.y2 + MIN(0, clipRect.Height() - aY - aSrcRect.Height() + 1));
+    }
 
-        for (TInt xx = -sx, dxx = dx; xx < j; xx++, dxx++) {
-          // Read pixel value from bitmap
-          TUint8 pix = aSrcBitmap->ReadPixel(xx, yy);
+    if (spriteRect.Width() <= 1 || spriteRect.Height() <= 1) {
+      return EFalse;
+    }
 
-          // Write pixel values
-          *pixels++ = pix;
-        }
+    pixels = &this->mPixels[destY * mPitch + destX];
+    nextRow = (mPitch * incY) - ((spriteRect.Width() - 1) * incX);
+
+    for (TInt y = spriteRect.y1; y < spriteRect.y2; y++, pixels += nextRow) {
+      for (TInt x = spriteRect.x1; x < spriteRect.x2; x++, pixels += incX) {
+        *pixels = aSrcBitmap->ReadPixel(x, y);
       }
     }
   }
@@ -331,273 +446,181 @@ TBool BBitmap::DrawBitmap(BViewPort *aViewPort, BBitmap *aSrcBitmap, TRect aSrcR
 
 void BBitmap::CopyPixels(BBitmap *aOther) {
   if (aOther->mWidth != mWidth || aOther->mHeight != mHeight) {
+#ifndef PRODUCTION
+#if (defined(__XTENSA__) && defined(DEBUGME)) || !defined(__XTENSA__)
     printf("CopyPixels: other bitmap has different dimensions\n");
+#endif
+#endif
     return;
   }
-  memcpy(mPixels, aOther->mPixels, mWidth * mHeight);
+
+  memcpy(mPixels, aOther->mPixels, mWidth * mHeight * sizeof(TUint8));
 }
 
-TBool BBitmap::DrawBitmapTransparent(BViewPort *aViewPort, BBitmap *aSrcBitmap, TRect aSrcRect, TInt aX, TInt aY,
-                                     TUint32 aFlags) {
-  TInt t               = aSrcBitmap->mTransparentColor,
-       viewPortOffsetX = 0,
-       viewPortOffsetY = 0;
+TBool BBitmap::DrawBitmapTransparent(BViewPort *aViewPort, BBitmap *aSrcBitmap, TRect aSrcRect, TInt aX, TInt aY, TUint32 aFlags) {
+  const TInt t = aSrcBitmap->mTransparentColor;
 
-  // Create the viewport
-  TRect clipRect;
+  TUint8 *pixels;
+  TRect clipRect, spriteRect;
+  TInt nextRow,
+      viewPortOffsetX = 0,
+      viewPortOffsetY = 0,
+      incX = 1,
+      incY = 1;
+
   if (aViewPort) {
     aViewPort->GetRect(clipRect);
     viewPortOffsetX = TInt(round(aViewPort->mOffsetX));
     viewPortOffsetY = TInt(round(aViewPort->mOffsetY));
-  } else {
-    clipRect.Set(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+  }
+  else {
+    clipRect.Set(0, 0, SCREEN_WIDTH - 1, SCREEN_HEIGHT - 1);
   }
 
-  // Clamp x, y coords
-  const TInt clampX = MIN(0, aX);
-  const TInt clampY = MIN(0, aY);
+  TInt destX = MAX(0, aX) + viewPortOffsetX,
+       destY = MAX(0, aY) + viewPortOffsetY;
 
-  // Calculate clipped width and height
-  const TInt clipW = aSrcRect.x1 < 0 ? aSrcRect.x2 : aSrcRect.Width();
-  const TInt clipH = aSrcRect.y1 < 0 ? aSrcRect.y2 : aSrcRect.Height();
-
-  // Calculate drawable width and height
-  const TInt w = TBool(aFlags & DRAW_ROTATE_RIGHT) ^ TBool(aFlags & DRAW_ROTATE_LEFT)
-                 ? (clipH + clampX) - MAX(0, (clipH + aX) - clipRect.x2 + viewPortOffsetX)
-                 : (clipW + clampX) - MAX(0, (clipW + aX) - clipRect.x2 + viewPortOffsetX);
-
-  const TInt h        = TBool(aFlags & DRAW_ROTATE_RIGHT) ^ TBool(aFlags & DRAW_ROTATE_LEFT)
-                        ? (clipW + clampY) - MAX(0, (clipW + aY) - clipRect.y2 + viewPortOffsetY)
-                        : (clipH + clampY) - MAX(0, (clipH + aY) - clipRect.y2 + viewPortOffsetY);
-
-  // Return if the sprite to be drawn can not be seen
-  if (w < 1 || h < 1) {
-    return EFalse;
-  }
-
-  TUint8        *pixels;
-  const TUint32 pitch = this->mPitch;
-
-  // Init source x,y coordinates
-  const TInt sx = (aSrcRect.x1 < 0 ? aSrcRect.x1 : aSrcRect.x1 * -1) + clampX;
-  const TInt sy = (aSrcRect.y1 < 0 ? aSrcRect.y1 : aSrcRect.y1 * -1) + clampY;
-
-  // Init destination x,y coordinates
-  const TInt dx = (aX < 0 ? 0 : aX) + viewPortOffsetX;
-  const TInt dy = (aY < 0 ? 0 : aY) + viewPortOffsetY;
-
-  // Calculate sprite delta width and height
-  const TInt deltaImageWidth = TBool(aFlags & DRAW_ROTATE_RIGHT) ^ TBool(aFlags & DRAW_ROTATE_LEFT)
-                               ? (aX < 0 ? -aSrcRect.Height() + w : aSrcRect.Height() - w) - 1
-                               : (aX < 0 ? -aSrcRect.Width() + w : aSrcRect.Width() - w) - 1;
-
-  const TInt deltaImageHeight = TBool(aFlags & DRAW_ROTATE_RIGHT) ^ TBool(aFlags & DRAW_ROTATE_LEFT)
-                                ? (aY < 0 ? -aSrcRect.Width() + h : aSrcRect.Width() - h) - 1
-                                : (aY < 0 ? -aSrcRect.Height() + h : aSrcRect.Height() - h) - 1;
-
-  // Calculate visible width and height to iterate over
-  const TInt i = -sy + h;
-  const TInt j = -sx + w;
-
-  if (aFlags & DRAW_FLIPPED) {
+  // rotations (x, y are switched)
+  if (aFlags & (DRAW_ROTATE_LEFT | DRAW_ROTATE_RIGHT)) {
     if (aFlags & DRAW_FLOPPED) {
-      if (aFlags & DRAW_ROTATE_LEFT && !(aFlags & DRAW_ROTATE_RIGHT)) {
-        // flip and flop and rotate left
-        for (TInt yy = -sy, dyy = dy; yy < i; yy++, dyy++) {
-          pixels = &this->mPixels[dyy * pitch + dx];
-
-          for (TInt xx = -sx, dxx = dx, rsx = w + xx + deltaImageWidth; xx < j; xx++, dxx++, rsx--) {
-            // Read pixel value from bitmap
-            TUint8 pix = aSrcBitmap->ReadPixel(yy, rsx);
-            pixels++;
-
-            // Write non-transparent pixel values
-            if (pix != t) {
-              *pixels = pix;
-            }
-          }
+      if (aFlags & DRAW_FLIPPED) {
+        if (aFlags & DRAW_ROTATE_LEFT) {
+          // rotate left, flipped, flopped = rotate right
+          aFlags = DRAW_ROTATE_RIGHT;
         }
-      } else if (aFlags & DRAW_ROTATE_RIGHT && !(aFlags & DRAW_ROTATE_LEFT)) {
-        // flip and flop and rotate right
-        for (TInt yy = -sy, dyy = dy, rsy = h + yy + deltaImageHeight; yy < i; yy++, dyy++, rsy--) {
-          pixels = &this->mPixels[dyy * pitch + dx];
-
-          for (TInt xx = -sx, dxx = dx; xx < j; xx++, dxx++) {
-            // Read pixel value from bitmap
-            TUint8 pix = aSrcBitmap->ReadPixel(rsy, xx);
-            pixels++;
-
-            // Write non-transparent pixel values
-            if (pix != t) {
-              *pixels = pix;
-            }
-          }
-        }
-      } else {
-        // flipped and flopped
-        for (TInt yy = -sy, dyy = dy, fsy = h + yy + deltaImageHeight; yy < i; yy++, dyy++, fsy--) {
-          pixels = &this->mPixels[dyy * pitch + dx];
-
-          for (TInt xx = -sx, dxx = dx, fsx = w + xx + deltaImageWidth; xx < j; xx++, dxx++, fsx--) {
-            // Read pixel value from bitmap
-            TUint8 pix = aSrcBitmap->ReadPixel(fsx, fsy);
-            pixels++;
-
-            // Write non-transparent pixel values
-            if (pix != t) {
-              *pixels = pix;
-            }
-          }
+        else if (aFlags & DRAW_ROTATE_RIGHT) {
+          // rotate right, flipped, flopped = rotate left
+          aFlags = DRAW_ROTATE_LEFT;
         }
       }
-    } else {
-      if (aFlags & DRAW_ROTATE_LEFT && !(aFlags & DRAW_ROTATE_RIGHT)) {
+      else {
+        if (aFlags & DRAW_ROTATE_LEFT) {
+          // rotate left, flopped = rotate right, flipped
+          aFlags = DRAW_ROTATE_RIGHT | DRAW_FLIPPED;
+        }
+        else if (aFlags & DRAW_ROTATE_RIGHT) {
+          // rotate right, flopped = rotate left, flipped
+          aFlags = DRAW_ROTATE_LEFT | DRAW_FLIPPED;
+        }
+      }
+    }
+
+    if (aFlags & DRAW_FLIPPED) {
+      if (aFlags & DRAW_ROTATE_LEFT) {
         // flip and rotate left
-        for (TInt yy = -sy, dyy = dy; yy < i; yy++, dyy++) {
-          pixels = &this->mPixels[dyy * pitch + dx];
-
-          for (TInt xx = -sx, dxx = dx; xx < j; xx++, dxx++) {
-            // Read pixel value from bitmap
-            TUint8 pix = aSrcBitmap->ReadPixel(yy, xx);
-            pixels++;
-
-            // Write non-transparent pixel values
-            if (pix != t) {
-              *pixels = pix;
-            }
-          }
-        }
-      } else if (aFlags & DRAW_ROTATE_RIGHT && !(aFlags & DRAW_ROTATE_LEFT)) {
+        incX = -1;
+        incY = -1;
+        destX = MIN(clipRect.x2, aX + aSrcRect.Width() - 1 + viewPortOffsetX);
+        destY = MIN(clipRect.y2, aY + aSrcRect.Height() - 1 + viewPortOffsetY);
+        spriteRect.Set(
+            aSrcRect.y1 - MIN(0, clipRect.Width() - aX - aSrcRect.Width()),
+            aSrcRect.x1 - MIN(0, clipRect.Height() - aY - aSrcRect.Height()),
+            aSrcRect.y2 - MAX(0, clipRect.x1 - aX - viewPortOffsetX - 1),
+            aSrcRect.x2 - MAX(0, clipRect.y1 - aY - viewPortOffsetY - 1));
+      }
+      else {
         // flip and rotate right
-        for (TInt yy = -sy, dyy = dy, rsy = h + yy + deltaImageHeight; yy < i; yy++, dyy++, rsy--) {
-          pixels = &this->mPixels[dyy * pitch + dx];
-
-          for (TInt xx = -sx, dxx = dx, fsx = w + xx + deltaImageWidth; xx < j; xx++, dxx++, fsx--) {
-            // Read pixel value from bitmap
-            TUint8 pix = aSrcBitmap->ReadPixel(rsy, fsx);
-            pixels++;
-
-            // Write non-transparent pixel values
-            if (pix != t) {
-              *pixels = pix;
-            }
-          }
-        }
-      } else {
-        // flipped
-        for (TInt yy = -sy, dyy = dy; yy < i; yy++, dyy++) {
-          pixels = &this->mPixels[dyy * pitch + dx];
-
-          for (TInt xx = -sx, dxx = dx, fsx = w + xx + deltaImageWidth; xx < j; xx++, dxx++, fsx--) {
-            // Read pixel value from bitmap
-            TUint8 pix = aSrcBitmap->ReadPixel(fsx, yy);
-            pixels++;
-
-            // Write non-transparent pixel values
-            if (pix != t) {
-              *pixels = pix;
-            }
-          }
-        }
+        spriteRect.Set(
+            aSrcRect.y1 + MAX(0, clipRect.x1 - aX - viewPortOffsetX),
+            aSrcRect.x1 + MAX(0, clipRect.y1 - aY - viewPortOffsetY),
+            aSrcRect.y2 + MIN(0, clipRect.Width() - aX - aSrcRect.Width() + 1),
+            aSrcRect.x2 + MIN(0, clipRect.Height() - aY - aSrcRect.Height() + 1));
       }
     }
-  } else if (aFlags & DRAW_FLOPPED) {
-    if (aFlags & DRAW_ROTATE_LEFT && !(aFlags & DRAW_ROTATE_RIGHT)) {
-      // flop and rotate left
-      for (TInt yy = -sy, dyy = dy, fsy = h + yy + deltaImageHeight; yy < i; yy++, dyy++, fsy--) {
-        pixels = &this->mPixels[dyy * pitch + dx];
-
-        for (TInt xx = -sx, dxx = dx, rsx = w + xx + deltaImageWidth; xx < j; xx++, dxx++, rsx--) {
-          // Read pixel value from bitmap
-          TUint8 pix = aSrcBitmap->ReadPixel(fsy, rsx);
-          pixels++;
-
-          // Write non-transparent pixel values
-          if (pix != t) {
-            *pixels = pix;
-          }
-        }
-      }
-    } else if (aFlags & DRAW_ROTATE_RIGHT && !(aFlags & DRAW_ROTATE_LEFT)) {
-      // flop and rotate right
-      for (TInt yy = -sy, dyy = dy; yy < i; yy++, dyy++) {
-        pixels = &this->mPixels[dyy * pitch + dx];
-
-        for (TInt xx = -sx, dxx = dx; xx < j; xx++, dxx++) {
-          // Read pixel value from bitmap
-          TUint8 pix = aSrcBitmap->ReadPixel(yy, xx);
-          pixels++;
-
-          // Write non-transparent pixel values
-          if (pix != t) {
-            *pixels = pix;
-          }
-        }
-      }
-    } else {
-      // flopped
-      for (TInt yy = -sy, dyy = dy, fsy = h + yy + deltaImageHeight; yy < i; yy++, dyy++, fsy--) {
-        pixels = &this->mPixels[dyy * pitch + dx];
-
-        for (TInt xx = -sx, dxx = dx; xx < j; xx++, dxx++) {
-          // Read pixel value from bitmap
-          TUint8 pix = aSrcBitmap->ReadPixel(xx, fsy);
-          pixels++;
-
-          // Write non-transparent pixel values
-          if (pix != t) {
-            *pixels = pix;
-          }
-        }
-      }
-    }
-  } else {
-    if (aFlags & DRAW_ROTATE_LEFT && !(aFlags & DRAW_ROTATE_RIGHT)) {
+    else if (aFlags & DRAW_ROTATE_LEFT) {
       // rotate left
-      for (TInt yy = -sy, dyy = dy, rsy = h + yy + deltaImageHeight; yy < i; yy++, dyy++, rsy--) {
-        pixels = &this->mPixels[dyy * pitch + dx];
-
-        for (TInt xx = -sx, dxx = dx; xx < j; xx++, dxx++) {
-          // Read pixel value from bitmap
-          TUint8 pix = aSrcBitmap->ReadPixel(rsy, xx);
-          pixels++;
-
-          // Write non-transparent pixel values
-          if (pix != t) {
-            *pixels = pix;
-          }
-        }
-      }
-    } else if (aFlags & DRAW_ROTATE_RIGHT && !(aFlags & DRAW_ROTATE_LEFT)) {
+      incY = -1;
+      destY = MIN(clipRect.y2, aY + aSrcRect.Height() - 1 + viewPortOffsetY);
+      spriteRect.Set(
+          aSrcRect.y1 + MAX(0, clipRect.x1 - aX - viewPortOffsetX),
+          aSrcRect.x1 - MIN(0, clipRect.Height() - aY - aSrcRect.Height()),
+          aSrcRect.y2 + MIN(0, clipRect.Width() - aX - aSrcRect.Width() + 1),
+          aSrcRect.x2 - MAX(0, clipRect.y1 - aY - viewPortOffsetY - 1));
+    }
+    else {
       // rotate right
-      for (TInt yy = -sy, dyy = dy; yy < i; yy++, dyy++) {
-        pixels = &this->mPixels[dyy * pitch + dx];
+      incX = -1;
+      destX = MIN(clipRect.x2, aX + aSrcRect.Width() - 1 + viewPortOffsetX);
+      spriteRect.Set(
+          aSrcRect.y1 - MIN(0, clipRect.Width() - aX - aSrcRect.Width()),
+          aSrcRect.x1 + MAX(0, clipRect.y1 - aY - viewPortOffsetY),
+          aSrcRect.y2 - MAX(0, clipRect.x1 - aX - viewPortOffsetX - 1),
+          aSrcRect.x2 + MIN(0, clipRect.Height() - aY - aSrcRect.Height() + 1));
+    }
 
-        for (TInt xx = -sx, dxx = dx, rsx = w + xx + deltaImageWidth; xx < j; xx++, dxx++, rsx--) {
-          // Read pixel value from bitmap
-          TUint8 pix = aSrcBitmap->ReadPixel(yy, rsx);
-          pixels++;
+    if (spriteRect.Width() <= 1 || spriteRect.Height() <= 1) {
+      return EFalse;
+    }
 
-          // Write non-transparent pixel values
-          if (pix != t) {
-            *pixels = pix;
-          }
+    pixels = &this->mPixels[destY * mPitch + destX];
+    nextRow = (mPitch * incY) - ((spriteRect.Width() - 1) * incX);
+
+    for (TInt y = spriteRect.y1; y < spriteRect.y2; y++, pixels += nextRow) {
+      for (TInt x = spriteRect.x1; x < spriteRect.x2; x++, pixels += incX) {
+        TUint8 pix = aSrcBitmap->ReadPixel(y, x);
+        if (pix != t) {
+          *pixels = pix;
         }
       }
-    } else {
-      // just draw
-      for (TInt yy = -sy, dyy = dy; yy < i; yy++, dyy++) {
-        pixels = &this->mPixels[dyy * pitch + dx];
+    }
+  }
+  else {
+    // no rotations
+    if (aFlags & DRAW_FLIPPED) {
+      if (aFlags & DRAW_FLOPPED) {
+        // flipped and flopped
+        incX = -1;
+        incY = -1;
+        destX = MIN(clipRect.x2, aX + aSrcRect.Width() - 1 + viewPortOffsetX);
+        destY = MIN(clipRect.y2, aY + aSrcRect.Height() - 1 + viewPortOffsetY);
+        spriteRect.Set(
+            aSrcRect.x1 - MIN(0, clipRect.Width() - aX - aSrcRect.Width()),
+            aSrcRect.y1 - MIN(0, clipRect.Height() - aY - aSrcRect.Height()),
+            aSrcRect.x2 - MAX(0, clipRect.x1 - aX - viewPortOffsetX - 1),
+            aSrcRect.y2 - MAX(0, clipRect.y1 - aY - viewPortOffsetY - 1));
+      }
+      else {
+        // flipped
+        incX = -1;
+        destX = MIN(clipRect.x2, aX + aSrcRect.Width() - 1 + viewPortOffsetX);
+        spriteRect.Set(
+            aSrcRect.x1 - MIN(0, clipRect.Width() - aX - aSrcRect.Width()),
+            aSrcRect.y1 + MAX(0, clipRect.y1 - aY - viewPortOffsetY),
+            aSrcRect.x2 - MAX(0, clipRect.x1 - aX - viewPortOffsetX - 1),
+            aSrcRect.y2 + MIN(0, clipRect.Height() - aY - aSrcRect.Height() + 1));
+      }
+    }
+    else if (aFlags & DRAW_FLOPPED) {
+      // flopped
+      incY = -1;
+      destY = MIN(clipRect.y2, aY + aSrcRect.Height() - 1 + viewPortOffsetY);
+      spriteRect.Set(
+          aSrcRect.x1 + MAX(0, clipRect.x1 - aX - viewPortOffsetX),
+          aSrcRect.y1 - MIN(0, clipRect.Height() - aY - aSrcRect.Height()),
+          aSrcRect.x2 + MIN(0, clipRect.Width() - aX - aSrcRect.Width() + 1),
+          aSrcRect.y2 - MAX(0, clipRect.y1 - aY - viewPortOffsetY - 1));
+    }
+    else {
+      // normal
+      spriteRect.Set(
+          aSrcRect.x1 + MAX(0, clipRect.x1 - aX - viewPortOffsetX),
+          aSrcRect.y1 + MAX(0, clipRect.y1 - aY - viewPortOffsetY),
+          aSrcRect.x2 + MIN(0, clipRect.Width() - aX - aSrcRect.Width() + 1),
+          aSrcRect.y2 + MIN(0, clipRect.Height() - aY - aSrcRect.Height() + 1));
+    }
 
-        for (TInt xx = -sx, dxx = dx; xx < j; xx++, dxx++) {
-          // Read pixel value from bitmap
-          TUint8 pix = aSrcBitmap->ReadPixel(xx, yy);
+    if (spriteRect.Width() <= 1 || spriteRect.Height() <= 1) {
+      return EFalse;
+    }
 
-          // Write non-transparent pixel values
-          if (pix != t) {
-            *pixels = pix;
-          }
-          pixels++;
+    pixels = &this->mPixels[destY * mPitch + destX];
+    nextRow = (mPitch * incY) - ((spriteRect.Width() - 1) * incX);
+
+    for (TInt y = spriteRect.y1; y < spriteRect.y2; y++, pixels += nextRow) {
+      for (TInt x = spriteRect.x1; x < spriteRect.x2; x++, pixels += incX) {
+        TUint8 pix = aSrcBitmap->ReadPixel(x, y);
+        if (pix != t) {
+          *pixels = pix;
         }
       }
     }
@@ -606,90 +629,247 @@ TBool BBitmap::DrawBitmapTransparent(BViewPort *aViewPort, BBitmap *aSrcBitmap, 
   return ETrue;
 }
 
-TBool BBitmap::DrawStringShadow(BViewPort *aViewPort, const char *aStr, const BFont *aFont, TInt aX, TInt aY, TInt aFgColor, TInt aShadowColor, TInt aBgColor, TInt aLetterSpacing) {
-  if (!DrawString(aViewPort, aStr, aFont, aX, aY, aShadowColor, aBgColor, aLetterSpacing)) {
-    return EFalse;
-  }
-  return DrawString(aViewPort, aStr, aFont, aX-1, aY-1, aFgColor, aBgColor, aLetterSpacing);
-}
+TBool BBitmap::FillBitmapTransparent(BViewPort *aViewPort, BBitmap *aSrcBitmap, TRect aSrcRect, TInt aX, TInt aY, TInt16 aFill, TUint32 aFlags) {
+  const TInt t = aSrcBitmap->mTransparentColor;
 
-TBool BBitmap::DrawString(BViewPort *aViewPort, const char *aStr, const BFont *aFont, TInt aX, TInt aY, TInt aFgColor,
-                          TInt aBgColor, TInt aLetterSpacing) {
-  TInt viewPortOffsetX      = 0, viewPortOffsetY = 0;
+  TUint8 *pixels;
+  TRect clipRect, spriteRect;
+  TInt nextRow,
+      viewPortOffsetX = 0,
+      viewPortOffsetY = 0,
+      incX = 1,
+      incY = 1;
 
-  // Create the viewport
-  TRect clipRect;
   if (aViewPort) {
     aViewPort->GetRect(clipRect);
     viewPortOffsetX = TInt(round(aViewPort->mOffsetX));
     viewPortOffsetY = TInt(round(aViewPort->mOffsetY));
-  } else {
-    clipRect.Set(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+  }
+  else {
+    clipRect.Set(0, 0, SCREEN_WIDTH - 1, SCREEN_HEIGHT - 1);
   }
 
-  TUint8        *pixels;
-  TBool         drawn       = false;
-  BBitmap       *fontBitmap = aFont->mBitmap;
-  const TUint   fontWidth   = aFont->mWidth;
-  const TUint   fontHeight  = aFont->mHeight;
-  const TInt    charOffset  = fontWidth + aLetterSpacing;
-  const TUint32 pitch       = this->mPitch;
-  const TBool   drawBg      = aBgColor != -1;
+  TInt destX = MAX(0, aX) + viewPortOffsetX,
+       destY = MAX(0, aY) + viewPortOffsetY;
 
-  const TInt clipW = fontWidth;
-  const TInt clipH = fontHeight;
+  // rotations (x, y are switched)
+  if (aFlags & (DRAW_ROTATE_LEFT | DRAW_ROTATE_RIGHT)) {
+    if (aFlags & DRAW_FLOPPED) {
+      if (aFlags & DRAW_FLIPPED) {
+        if (aFlags & DRAW_ROTATE_LEFT) {
+          // rotate left, flipped, flopped = rotate right
+          aFlags = DRAW_ROTATE_RIGHT;
+        }
+        else if (aFlags & DRAW_ROTATE_RIGHT) {
+          // rotate right, flipped, flopped = rotate left
+          aFlags = DRAW_ROTATE_LEFT;
+        }
+      }
+      else {
+        if (aFlags & DRAW_ROTATE_LEFT) {
+          // rotate left, flopped = rotate right, flipped
+          aFlags = DRAW_ROTATE_RIGHT | DRAW_FLIPPED;
+        }
+        else if (aFlags & DRAW_ROTATE_RIGHT) {
+          // rotate right, flopped = rotate left, flipped
+          aFlags = DRAW_ROTATE_LEFT | DRAW_FLIPPED;
+        }
+      }
+    }
+
+    if (aFlags & DRAW_FLIPPED) {
+      if (aFlags & DRAW_ROTATE_LEFT) {
+        // flip and rotate left
+        incX = -1;
+        incY = -1;
+        destX = MIN(clipRect.x2, aX + aSrcRect.Width() - 1 + viewPortOffsetX);
+        destY = MIN(clipRect.y2, aY + aSrcRect.Height() - 1 + viewPortOffsetY);
+        spriteRect.Set(
+            aSrcRect.y1 - MIN(0, clipRect.Width() - aX - aSrcRect.Width()),
+            aSrcRect.x1 - MIN(0, clipRect.Height() - aY - aSrcRect.Height()),
+            aSrcRect.y2 - MAX(0, clipRect.x1 - aX - viewPortOffsetX - 1),
+            aSrcRect.x2 - MAX(0, clipRect.y1 - aY - viewPortOffsetY - 1));
+      }
+      else {
+        // flip and rotate right
+        spriteRect.Set(
+            aSrcRect.y1 + MAX(0, clipRect.x1 - aX - viewPortOffsetX),
+            aSrcRect.x1 + MAX(0, clipRect.y1 - aY - viewPortOffsetY),
+            aSrcRect.y2 + MIN(0, clipRect.Width() - aX - aSrcRect.Width() + 1),
+            aSrcRect.x2 + MIN(0, clipRect.Height() - aY - aSrcRect.Height() + 1));
+      }
+    }
+    else if (aFlags & DRAW_ROTATE_LEFT) {
+      // rotate left
+      incY = -1;
+      destY = MIN(clipRect.y2, aY + aSrcRect.Height() - 1 + viewPortOffsetY);
+      spriteRect.Set(
+          aSrcRect.y1 - MIN(0, clipRect.Width() - aX - aSrcRect.Width()),
+          aSrcRect.x1 - MIN(0, clipRect.Height() - aY - aSrcRect.Height()),
+          aSrcRect.y2 - MAX(0, clipRect.x1 - aX - viewPortOffsetX - 1),
+          aSrcRect.x2 - MAX(0, clipRect.y1 - aY - viewPortOffsetY - 1));
+    }
+    else {
+      // rotate right
+      incX = -1;
+      destX = MIN(clipRect.x2, aX + aSrcRect.Width() - 1 + viewPortOffsetX);
+      spriteRect.Set(
+          aSrcRect.y1 - MIN(0, clipRect.Width() - aX - aSrcRect.Width()),
+          aSrcRect.x1 + MAX(0, clipRect.y1 - aY - viewPortOffsetY),
+          aSrcRect.y2 - MAX(0, clipRect.x1 - aX - viewPortOffsetX - 1),
+          aSrcRect.x2 + MIN(0, clipRect.Height() - aY - aSrcRect.Height() + 1));
+    }
+
+    if (spriteRect.Width() == 1 || spriteRect.Height() == 1) {
+      return EFalse;
+    }
+
+    pixels = &this->mPixels[destY * mPitch + destX];
+    nextRow = (mPitch * incY) - ((spriteRect.Width() - 1) * incX);
+
+    for (TInt y = spriteRect.y1; y < spriteRect.y2; y++, pixels += nextRow) {
+      for (TInt x = spriteRect.x1; x < spriteRect.x2; x++, pixels += incX) {
+        TUint8 pix = aSrcBitmap->ReadPixel(y, x);
+        if (pix != t) {
+          *pixels = aFill;
+        }
+      }
+    }
+  }
+  else {
+    // no rotations
+    if (aFlags & DRAW_FLIPPED) {
+      if (aFlags & DRAW_FLOPPED) {
+        // flipped and flopped
+        incX = -1;
+        incY = -1;
+        destX = MIN(clipRect.x2, aX + aSrcRect.Width() - 1 + viewPortOffsetX);
+        destY = MIN(clipRect.y2, aY + aSrcRect.Height() - 1 + viewPortOffsetY);
+        spriteRect.Set(
+            aSrcRect.x1 - MIN(0, clipRect.Width() - aX - aSrcRect.Width()),
+            aSrcRect.y1 - MIN(0, clipRect.Height() - aY - aSrcRect.Height()),
+            aSrcRect.x2 - MAX(0, clipRect.x1 - aX - viewPortOffsetX - 1),
+            aSrcRect.y2 - MAX(0, clipRect.y1 - aY - viewPortOffsetY - 1));
+      }
+      else {
+        // flipped
+        incX = -1;
+        destX = MIN(clipRect.x2, aX + aSrcRect.Width() - 1 + viewPortOffsetX);
+        spriteRect.Set(
+            aSrcRect.x1 - MIN(0, clipRect.Width() - aX - aSrcRect.Width()),
+            aSrcRect.y1 + MAX(0, clipRect.y1 - aY - viewPortOffsetY),
+            aSrcRect.x2 - MAX(0, clipRect.x1 - aX - viewPortOffsetX - 1),
+            aSrcRect.y2 + MIN(0, clipRect.Height() - aY - aSrcRect.Height() + 1));
+      }
+    }
+    else if (aFlags & DRAW_FLOPPED) {
+      // flopped
+      incY = -1;
+      destY = MIN(clipRect.y2, aY + aSrcRect.Height() - 1 + viewPortOffsetY);
+      spriteRect.Set(
+          aSrcRect.x1 + MAX(0, clipRect.x1 - aX - viewPortOffsetX),
+          aSrcRect.y1 - MIN(0, clipRect.Height() - aY - aSrcRect.Height()),
+          aSrcRect.x2 + MIN(0, clipRect.Width() - aX - aSrcRect.Width() + 1),
+          aSrcRect.y2 - MAX(0, clipRect.y1 - aY - viewPortOffsetY - 1));
+    }
+    else {
+      // normal
+      spriteRect.Set(
+          aSrcRect.x1 + MAX(0, clipRect.x1 - aX - viewPortOffsetX),
+          aSrcRect.y1 + MAX(0, clipRect.y1 - aY - viewPortOffsetY),
+          aSrcRect.x2 + MIN(0, clipRect.Width() - aX - aSrcRect.Width() + 1),
+          aSrcRect.y2 + MIN(0, clipRect.Height() - aY - aSrcRect.Height() + 1));
+    }
+
+    if (spriteRect.Width() == 1 || spriteRect.Height() == 1) {
+      return EFalse;
+    }
+
+    pixels = &this->mPixels[destY * mPitch + destX];
+    nextRow = (mPitch * incY) - ((spriteRect.Width() - 1) * incX);
+
+    for (TInt y = spriteRect.y1; y < spriteRect.y2; y++, pixels += nextRow) {
+      for (TInt x = spriteRect.x1; x < spriteRect.x2; x++, pixels += incX) {
+        TUint8 pix = aSrcBitmap->ReadPixel(x, y);
+        if (pix != t) {
+          *pixels = aFill;
+        }
+      }
+    }
+  }
+
+  return ETrue;
+}
+
+TBool BBitmap::DrawStringShadow(BViewPort *aViewPort, const char *aStr, const BFont *aFont, TInt aX, TInt aY, TUint8 aFgColor, TUint8 aShadowColor, TInt16 aBgColor, TInt aLetterSpacing) {
+  return DrawString(aViewPort, aStr, aFont, aX, aY, aShadowColor, aBgColor, aLetterSpacing)
+             ? DrawString(aViewPort, aStr, aFont, aX - 1, aY - 1, aFgColor, aBgColor, aLetterSpacing)
+             : EFalse;
+}
+
+TBool BBitmap::DrawString(BViewPort *aViewPort, const char *aStr, const BFont *aFont, TInt aX, TInt aY, TUint8 aFgColor, TInt16 aBgColor, TInt aLetterSpacing) {
+  const TInt fontWidth = aFont->mWidth,
+             fontHeight = aFont->mHeight,
+             charOffset = fontWidth + aLetterSpacing;
+  const TBool drawBg = aBgColor != -1;
+  TBool drawn = EFalse;
+  BBitmap *fontBitmap = aFont->mBitmap;
+
+  TUint8 *pixels;
+  TRect clipRect, charRect;
+  TInt nextRow,
+      viewPortOffsetX = 0,
+      viewPortOffsetY = 0;
+
+  if (aViewPort) {
+    aViewPort->GetRect(clipRect);
+    viewPortOffsetX = TInt(round(aViewPort->mOffsetX));
+    viewPortOffsetY = TInt(round(aViewPort->mOffsetY));
+  }
+  else {
+    clipRect.Set(0, 0, SCREEN_WIDTH - 1, SCREEN_HEIGHT - 1);
+  }
 
   while (*aStr) {
-    // Clamp x, y coords
-    const TInt clampX = MIN(0, aX);
-    const TInt clampY = MIN(0, aY);
+    TInt destX = MAX(0, aX) + viewPortOffsetX,
+         destY = MAX(0, aY) + viewPortOffsetY;
 
-    // Calculate drawable width and height
-    const TInt w = (clipW + clampX) - MAX(0, (clipW + aX) - clipRect.x2 + viewPortOffsetX);
-    const TInt h = (clipH + clampY) - MAX(0, (clipH + aY) - clipRect.y2 + viewPortOffsetY);
+    // Get character
+    const char c = *aStr++;
+    const TInt col = (c % 16) * fontWidth;
+    const TInt row = (c / 16) * fontHeight;
 
-    // Return if the string to be drawn can not be seen
-    if (w < 1 || h < 1) {
+    charRect.Set(
+        col + MAX(0, clipRect.x1 - aX - viewPortOffsetX),
+        row + MAX(0, clipRect.y1 - aY - viewPortOffsetY),
+        col + fontWidth + MIN(0, clipRect.Width() - aX - fontWidth),
+        row + fontHeight + MIN(0, clipRect.Height() - aY - fontHeight));
+
+    if (charRect.Height() <= 1) {
+      return EFalse;
+    }
+
+    if (charRect.Width() <= 1) {
       drawn |= EFalse;
-      aStr++;
       aX += charOffset;
       continue;
     }
 
-    // Init destination x,y coordinates
-    const TInt dx = (aX < 0 ? 0 : aX) + viewPortOffsetX;
-    TInt       dy = (aY < 0 ? 0 : aY) + viewPortOffsetY;
+    pixels = &mPixels[destY * mPitch + destX];
+    nextRow = mPitch - (charRect.Width() - 1);
 
-    // Get character
-    const char c   = *aStr++;
-    const TInt row = c / 16;
-    const TInt col = c % 16;
-
-    // Init source x,y coordinates
-    const TInt sx = col * -fontWidth + clampX;
-    const TInt sy = row * -fontHeight + clampY;
-
-    // Calculate visible width and height to iterate over
-    const TInt i = -sy + h;
-    const TInt j = -sx + w;
-
-    for (TInt yy = -sy; yy < i; yy++) {
-      pixels = &this->mPixels[dy++ * pitch + dx];
-
-      for (TInt xx = -sx; xx < j; xx++) {
-        // Read pixel value from bitmap
-        TUint8 pix = fontBitmap->ReadPixel(xx, yy);
-
+    for (TInt y = charRect.y1; y < charRect.y2; y++, pixels += nextRow) {
+      for (TInt x = charRect.x1; x < charRect.x2; x++, pixels++) {
+        TUint8 pix = fontBitmap->ReadPixel(x, y);
         // Write background and foreground pixels
         if (pix == 0) {
           if (drawBg) {
-            *pixels = TUint8(aBgColor);
+            *pixels = aBgColor;
           }
-        } else {
+        }
+        else {
           *pixels = aFgColor;
         }
-
-        pixels++;
       }
     }
 
@@ -700,8 +880,27 @@ TBool BBitmap::DrawString(BViewPort *aViewPort, const char *aStr, const BFont *a
   return drawn;
 }
 
-void BBitmap::Clear(TUint8 aColor) {
-  memset(mPixels, aColor, mPitch * mHeight);
+void BBitmap::Clear(TUint8 aIndex) {
+  const TInt len = mPitch * mHeight;
+
+  if (aIndex == 0) {
+    memset(mPixels, aIndex, len * sizeof(TUint8));
+    return;
+  }
+
+  for (TInt i = 0; i < len; i++) {
+    WritePixel(i, 0, aIndex);
+  }
+}
+
+void BBitmap::WritePixel(TInt aX, TInt aY, TUint8 aIndex) {
+  mPixels[aY * mPitch + aX] = aIndex;
+}
+
+void BBitmap::SafeWritePixel(TInt aX, TInt aY, TUint8 aIndex) {
+  if (mDimensions.PointInRect(aX, aY)) {
+    WritePixel(aX, aY, aIndex);
+  }
 }
 
 void BBitmap::DrawFastHLine(BViewPort *aViewPort, TInt aX, TInt aY, TUint aW, TUint8 aColor) {
@@ -717,16 +916,17 @@ void BBitmap::DrawFastHLine(BViewPort *aViewPort, TInt aX, TInt aY, TUint aW, TU
     viewPortOffsetY = TInt(round(aViewPort->mOffsetY));
     aX += viewPortOffsetX;
     aY += viewPortOffsetY;
-  } else {
-    clipRect.Set(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+  }
+  else {
+    clipRect.Set(0, 0, SCREEN_WIDTH - 1, SCREEN_HEIGHT - 1);
   }
 
   // Store viewport width/height
-  const TInt clipRectWidth  = clipRect.Width();
-  const TInt clipRectHeight = clipRect.Height();
+  const TInt clipRectWidth = clipRect.Width() - 1 + viewPortOffsetX;
+  const TInt clipRectHeight = clipRect.Height() - 1 + viewPortOffsetY;
 
   // Do y bounds checks
-  if (aY < viewPortOffsetY || aY >= clipRectHeight) {
+  if (aY < viewPortOffsetY || aY > clipRectHeight) {
     return;
   }
 
@@ -734,7 +934,7 @@ void BBitmap::DrawFastHLine(BViewPort *aViewPort, TInt aX, TInt aY, TUint aW, TU
   TInt xEnd = aX + aW;
 
   // Check if the entire line is not on the display
-  if (xEnd <= viewPortOffsetX || aX >= clipRectWidth) {
+  if (xEnd < viewPortOffsetX || aX > clipRectWidth) {
     return;
   }
 
@@ -745,13 +945,13 @@ void BBitmap::DrawFastHLine(BViewPort *aViewPort, TInt aX, TInt aY, TUint aW, TU
 
   // Don't end past the right edge
   if (xEnd > clipRectWidth) {
-    xEnd = clipRectWidth;
+    xEnd = clipRectWidth + 1;
   }
 
   // calculate actual width (even if unchanged)
   aW = TUint(xEnd - aX);
 
-  TUint8 *pixels = &this->mPixels[aY * this->mPitch + aX];
+  TUint8 *pixels = &mPixels[aY * mPitch + aX];
 
   while (aW > 3) {
     *pixels++ = aColor;
@@ -780,16 +980,17 @@ void BBitmap::DrawFastVLine(BViewPort *aViewPort, TInt aX, TInt aY, TUint aH, TU
     viewPortOffsetY = TInt(round(aViewPort->mOffsetY));
     aX += viewPortOffsetX;
     aY += viewPortOffsetY;
-  } else {
-    clipRect.Set(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+  }
+  else {
+    clipRect.Set(0, 0, SCREEN_WIDTH - 1, SCREEN_HEIGHT - 1);
   }
 
   // Store viewport width/height
-  const TInt clipRectWidth  = clipRect.Width();
-  const TInt clipRectHeight = clipRect.Height();
+  const TInt clipRectWidth = clipRect.Width() - 1 + viewPortOffsetX;
+  const TInt clipRectHeight = clipRect.Height() - 1 + viewPortOffsetY;
 
   // Do x bounds checks
-  if (aX < viewPortOffsetX || aX >= clipRectWidth) {
+  if (aX < viewPortOffsetX || aX > clipRectWidth) {
     return;
   }
 
@@ -797,7 +998,7 @@ void BBitmap::DrawFastVLine(BViewPort *aViewPort, TInt aX, TInt aY, TUint aH, TU
   TInt yEnd = aY + aH;
 
   // Check if the entire line is not on the display
-  if (yEnd <= viewPortOffsetY || aY >= clipRectHeight) {
+  if (yEnd < viewPortOffsetY || aY > clipRectHeight) {
     return;
   }
 
@@ -808,40 +1009,51 @@ void BBitmap::DrawFastVLine(BViewPort *aViewPort, TInt aX, TInt aY, TUint aH, TU
 
   // Don't end past the bottom edge
   if (yEnd > clipRectHeight) {
-    yEnd = clipRectHeight;
+    yEnd = clipRectHeight + 1;
   }
 
   // calculate actual height (even if unchanged)
   aH = TUint(yEnd - aY);
 
-  const TUint32 pitch   = this->mPitch;
-  TUint8        *pixels = &this->mPixels[aY * pitch + aX];
+  TUint8 *pixels = &mPixels[aY * mPitch + aX];
 
   while (aH > 3) {
     *pixels = aColor;
-    pixels += pitch;
+    pixels += mPitch;
     *pixels = aColor;
-    pixels += pitch;
+    pixels += mPitch;
     *pixels = aColor;
-    pixels += pitch;
+    pixels += mPitch;
     *pixels = aColor;
-    pixels += pitch;
+    pixels += mPitch;
     aH -= 4;
   }
 
   while (aH > 0) {
     *pixels = aColor;
-    pixels += pitch;
+    pixels += mPitch;
     aH--;
   }
 }
 
 void BBitmap::DrawLine(BViewPort *aViewPort, TInt aX1, TInt aY1, TInt aX2, TInt aY2, TUint8 aColor) {
+  // Draw simple lines if possible
+  if (aY1 == aY2) {
+    return aX2 > aX1
+        ? DrawFastHLine(aViewPort, aX1, aY1, aX2 - aX1 + 1, aColor)
+        : DrawFastHLine(aViewPort, aX2, aY1, aX1 - aX2 + 1, aColor);
+  }
+  else if (aX1 == aX2) {
+    return aY2 > aY1
+      ? DrawFastVLine(aViewPort, aX1, aY1, aY2 - aY1 + 1, aColor)
+      : DrawFastVLine(aViewPort, aX1, aY2, aY1 - aY2 + 1, aColor);
+  }
+
+  // Bresenham's algorithm
+  // https://en.wikipedia.org/wiki/Bresenham%27s_line_algorithm
+
   TInt viewPortOffsetX = 0;
   TInt viewPortOffsetY = 0;
-
-  TUint8  *pixels;
-  TUint32 pitch        = this->mPitch;
 
   // Create the viewport
   TRect clipRect;
@@ -853,199 +1065,14 @@ void BBitmap::DrawLine(BViewPort *aViewPort, TInt aX1, TInt aY1, TInt aX2, TInt 
     aX2 += viewPortOffsetX;
     aY1 += viewPortOffsetY;
     aY2 += viewPortOffsetY;
-  } else {
-    clipRect.Set(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+  }
+  else {
+    clipRect.Set(0, 0, SCREEN_WIDTH - 1, SCREEN_HEIGHT - 1);
   }
 
   // Store viewport width/height
-  const TInt clipRectWidth  = clipRect.Width();
-  const TInt clipRectHeight = clipRect.Height();
-
-  // Draw simple lines if possible
-  if (aY1 == aY2) {
-    // Do y bounds checks
-    if (aY1 < viewPortOffsetY || aY1 >= clipRectHeight) {
-      return;
-    }
-
-    if (aX1 == aX2) {
-      if (aX1 >= viewPortOffsetX && aX1 < clipRectWidth) {
-        // Draw a single pixel at aX1, aY1
-        this->mPixels[aY1 * pitch + aX1] = aColor;
-      }
-    } else if (aX2 > aX1) {
-      // Draw horizontal line at aX1, aY1
-
-      // last x point + 1
-      TInt xEnd = aX2 + 1;
-
-      // Check if the entire line is not on the display
-      if (xEnd <= viewPortOffsetX || aX1 >= clipRectWidth) {
-        return;
-      }
-
-      // Don't start before the left edge
-      if (aX1 < viewPortOffsetX) {
-        aX1 = viewPortOffsetX;
-      }
-
-      // Don't end past the right edge
-      if (xEnd > clipRectWidth) {
-        xEnd = clipRectWidth;
-      }
-
-      // calculate actual width (even if unchanged)
-      auto w = TUint(xEnd - aX1);
-
-      pixels = &this->mPixels[aY1 * pitch + aX1];
-
-      while (w > 3) {
-        *pixels++ = aColor;
-        *pixels++ = aColor;
-        *pixels++ = aColor;
-        *pixels++ = aColor;
-        w -= 4;
-      }
-
-      while (w > 0) {
-        *pixels++ = aColor;
-        w--;
-      }
-    } else {
-      // Draw horizontal line at aX2, aY1
-
-      // last x point + 1
-      TInt xEnd = aX1 + 1;
-
-      // Check if the entire line is not on the display
-      if (xEnd <= viewPortOffsetX || aX1 >= clipRectWidth) {
-        return;
-      }
-
-      // Don't start before the left edge
-      if (aX2 < viewPortOffsetX) {
-        aX2 = viewPortOffsetX;
-      }
-
-      // Don't end past the right edge
-      if (xEnd > clipRectWidth) {
-        xEnd = clipRectWidth;
-      }
-
-      // calculate actual width (even if unchanged)
-      auto w = TUint(xEnd - aX2);
-
-      pixels = &this->mPixels[aY1 * pitch + aX2];
-
-      while (w > 3) {
-        *pixels++ = aColor;
-        *pixels++ = aColor;
-        *pixels++ = aColor;
-        *pixels++ = aColor;
-        w -= 4;
-      }
-
-      while (w > 0) {
-        *pixels++ = aColor;
-        w--;
-      }
-    }
-    return;
-  } else if (aX1 == aX2) {
-    // Do x bounds checks
-    if (aX1 < viewPortOffsetX || aX1 >= clipRectWidth) {
-      return;
-    }
-    if (aY2 > aY1) {
-      // Draw vertical line at aX1, aY1
-
-      // last y point + 1
-      TInt yEnd = aY2 + 1;
-
-      // Check if the entire line is not on the display
-      if (yEnd <= viewPortOffsetY || aY1 >= clipRectHeight) {
-        return;
-      }
-
-      // Don't start before the top edge
-      if (aY1 < viewPortOffsetY) {
-        aY1 = viewPortOffsetY;
-      }
-
-      // Don't end past the bottom edge
-      if (yEnd > clipRectHeight) {
-        yEnd = clipRectHeight;
-      }
-
-      // calculate actual height (even if unchanged)
-      auto h = TUint(yEnd - aY1);
-
-      pixels = &this->mPixels[aY1 * pitch + aX1];
-      while (h > 3) {
-        *pixels = aColor;
-        pixels += pitch;
-        *pixels = aColor;
-        pixels += pitch;
-        *pixels = aColor;
-        pixels += pitch;
-        *pixels = aColor;
-        pixels += pitch;
-        h -= 4;
-      }
-
-      while (h > 0) {
-        *pixels = aColor;
-        pixels += pitch;
-        h--;
-      }
-    } else {
-      // Draw vertical line at aX1, aY2
-
-      // last y point + 1
-      TInt yEnd = aY1 + 1;
-
-      // Check if the entire line is not on the display
-      if (yEnd <= viewPortOffsetY || aY2 >= clipRectHeight) {
-        return;
-      }
-
-      // Don't start before the top edge
-      if (aY2 < viewPortOffsetY) {
-        aY2 = viewPortOffsetY;
-      }
-
-      // Don't end past the bottom edge
-      if (yEnd > clipRectHeight) {
-        yEnd = clipRectHeight;
-      }
-
-      // calculate actual height (even if unchanged)
-      auto h = TUint(yEnd - aY2);
-
-      pixels = &this->mPixels[aY2 * pitch + aX1];
-      while (h > 3) {
-        *pixels = aColor;
-        pixels += pitch;
-        *pixels = aColor;
-        pixels += pitch;
-        *pixels = aColor;
-        pixels += pitch;
-        *pixels = aColor;
-        pixels += pitch;
-        h -= 4;
-      }
-
-      while (h > 0) {
-        *pixels = aColor;
-        pixels += pitch;
-        h--;
-      }
-    }
-    return;
-  }
-
-  // Bresenham's algorithm
-  // https://en.wikipedia.org/wiki/Bresenham%27s_line_algorithm
+  const TInt clipRectWidth = clipRect.Width() - 1 + viewPortOffsetX;
+  const TInt clipRectHeight = clipRect.Height() - 1 + viewPortOffsetY;
   const TBool steep = ABS(aY2 - aY1) > ABS(aX2 - aX1);
 
   if (steep) {
@@ -1054,8 +1081,8 @@ void BBitmap::DrawLine(BViewPort *aViewPort, TInt aX1, TInt aY1, TInt aX2, TInt 
     aY1 = temp;
 
     temp = aX2;
-    aX2  = aY2;
-    aY2  = temp;
+    aX2 = aY2;
+    aY2 = temp;
   }
 
   if (aX1 > aX2) {
@@ -1064,40 +1091,40 @@ void BBitmap::DrawLine(BViewPort *aViewPort, TInt aX1, TInt aY1, TInt aX2, TInt 
     aX2 = temp;
 
     temp = aY1;
-    aY1  = aY2;
-    aY2  = temp;
+    aY1 = aY2;
+    aY2 = temp;
   }
 
-  const TInt dx    = aX2 - aX1;
-  const TInt dy    = ABS(aY2 - aY1);
+  const TInt dx = aX2 - aX1;
+  const TInt dy = ABS(aY2 - aY1);
   const TInt ystep = aY1 < aY2 ? 1 : -1;
 
   TInt err = dx / 2;
 
-  const TFloat m = (TFloat) (aY2 - aY1) / (aX2 - aX1);
+  const TFloat m = TFloat(aY2 - aY1) / (aX2 - aX1);
 
   if (steep) {
-    if (aX1 < viewPortOffsetY || aX1 >= clipRectHeight) {
-      aX1 = aX1 < viewPortOffsetY ? viewPortOffsetY : clipRectHeight - 1;
+    if (aX1 < viewPortOffsetY || aX1 > clipRectHeight) {
+      aX1 = aX1 < viewPortOffsetY ? viewPortOffsetY : clipRectHeight;
       const TInt tempDeltaX = MAX(1, aX2 - aX1);
-      aY1 = TInt(-tempDeltaX * (m - ((TFloat) aY2 / tempDeltaX)));
+      aY1 = TInt(-tempDeltaX * (m - ((TFloat)aY2 / tempDeltaX)));
     }
 
-    if (aY1 < viewPortOffsetX || aY1 >= clipRectWidth) {
-      aY1 = aY1 < viewPortOffsetX ? viewPortOffsetX : clipRectWidth - 1;
+    if (aY1 < viewPortOffsetX || aY1 > clipRectWidth) {
+      aY1 = aY1 < viewPortOffsetX ? viewPortOffsetX : clipRectWidth;
       const TInt tempDeltaY = aY2 - aY1;
       aX1 = MAX(viewPortOffsetY, TInt((-tempDeltaY + (m * aX2)) / m));
     }
 
-    if (aX2 >= clipRectHeight || aX2 < viewPortOffsetY || aY2 >= clipRectWidth || aY2 < viewPortOffsetX) {
-      aY2 = aY2 < viewPortOffsetX ? viewPortOffsetX : MIN(aY2, clipRectWidth - 1);
-      aX2 = MIN(clipRectHeight - 1, TInt(((aY2
-        -aY1) + (m * aX1)) / m));
+    if (aX2 > clipRectHeight || aX2 < viewPortOffsetY ||
+        aY2 > clipRectWidth || aY2 < viewPortOffsetX) {
+      aY2 = aY2 < viewPortOffsetX ? viewPortOffsetX : MIN(aY2, clipRectWidth);
+      aX2 = MIN(clipRectHeight, TInt(((aY2 - aY1) + (m * aX1)) / m));
     }
 
     // aY1 is X coord and aX1 is Y coord in this case
     for (; aX1 <= aX2; aX1++) {
-      this->mPixels[aX1 * pitch + aY1] = aColor;
+      mPixels[aX1 * mPitch + aY1] = aColor;
 
       err -= dy;
 
@@ -1106,28 +1133,29 @@ void BBitmap::DrawLine(BViewPort *aViewPort, TInt aX1, TInt aY1, TInt aX2, TInt 
         err += dx;
       }
     }
-  } else {
-    if (aY1 < viewPortOffsetY || aY1 >= clipRectHeight) {
-      aY1 = aY1 < viewPortOffsetY ? viewPortOffsetY : clipRectHeight - 1;
+  }
+  else {
+    if (aY1 < viewPortOffsetY || aY1 > clipRectHeight) {
+      aY1 = aY1 < viewPortOffsetY ? viewPortOffsetY : clipRectHeight;
       const TInt tempDeltaY = aY2 - aY1;
       aX1 = TInt((-tempDeltaY + (m * aX2)) / m);
     }
 
-    if (aX1 < viewPortOffsetX || aX1 >= clipRectWidth) {
-      aX1 = aX1 < viewPortOffsetX ? viewPortOffsetX : clipRectWidth - 1;
+    if (aX1 < viewPortOffsetX || aX1 > clipRectWidth) {
+      aX1 = aX1 < viewPortOffsetX ? viewPortOffsetX : clipRectWidth;
       const TInt tempDeltaX = MAX(1, aX2 - aX1);
-      aY1 = MAX(viewPortOffsetY, TInt(-tempDeltaX * (m - ((TFloat) aY2 / tempDeltaX))));
+      aY1 = MAX(viewPortOffsetY, TInt(-tempDeltaX * (m - ((TFloat)aY2 / tempDeltaX))));
     }
 
-    if (aY2 >= clipRectHeight || aY2 < viewPortOffsetY || aX2 >= clipRectWidth || aX2 < viewPortOffsetX) {
-      aY2 = aY2 < viewPortOffsetY ? viewPortOffsetY : MIN(aY2, clipRectHeight - 1);
-      aX2 = MIN(clipRectWidth - 1, TInt(((aY2
-        -aY1) + (m * aX1)) / m));
+    if (aY2 > clipRectHeight || aY2 < viewPortOffsetY ||
+        aX2 > clipRectWidth || aX2 < viewPortOffsetX) {
+      aY2 = aY2 < viewPortOffsetY ? viewPortOffsetY : MIN(aY2, clipRectHeight);
+      aX2 = MIN(clipRectWidth, TInt(((aY2 - aY1) + (m * aX1)) / m));
     }
 
     // aX1 is X coord and aY1 is Y coord in this case
     for (; aX1 <= aX2; aX1++) {
-      this->mPixels[aY1 * pitch + aX1] = aColor;
+      mPixels[aY1 * mPitch + aX1] = aColor;
 
       err -= dy;
 
@@ -1140,223 +1168,29 @@ void BBitmap::DrawLine(BViewPort *aViewPort, TInt aX1, TInt aY1, TInt aX2, TInt 
 }
 
 void BBitmap::DrawRect(BViewPort *aViewPort, TInt aX1, TInt aY1, TInt aX2, TInt aY2, TUint8 aColor) {
-  TInt x2, y2, w;
-  TInt viewPortOffsetX = 0;
-  TInt viewPortOffsetY = 0;
-
-  TUint8        *pixels;
-  const TUint32 pitch  = this->mPitch;
-
-  // Create the viewport
-  TRect clipRect;
-  if (aViewPort) {
-    aViewPort->GetRect(clipRect);
-    viewPortOffsetX = TInt(round(aViewPort->mOffsetX));
-    viewPortOffsetY = TInt(round(aViewPort->mOffsetY));
-    aX1 += viewPortOffsetX;
-    aX2 += viewPortOffsetX;
-    aY1 += viewPortOffsetY;
-    aY2 += viewPortOffsetY;
-  } else {
-    clipRect.Set(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
-  }
-
-  // Store viewport width/height
-  const TInt clipRectWidth  = clipRect.Width();
-  const TInt clipRectHeight = clipRect.Height();
-
-  // calculate boundaries
-  TInt xMax  = MAX(viewPortOffsetX, aX1);
-  TInt yDest = MAX(0, aY1) * pitch;
-  aX2 = MIN(clipRectWidth, aX2);
-  w   = aX2 - xMax;
-
-  // Draw horizontal lines
-  if (aX2 >= viewPortOffsetX && aX1 < clipRectWidth) {
-    // Draw rectangle's top side
-    if (aY1 >= viewPortOffsetY && aY1 < clipRectHeight) {
-      // cache initial coordinates
-      x2 = w;
-
-      pixels = &this->mPixels[yDest + xMax];
-      while (x2 > 3) {
-        *pixels++ = aColor;
-        *pixels++ = aColor;
-        *pixels++ = aColor;
-        *pixels++ = aColor;
-        x2 -= 4;
-      }
-
-      while (x2 > 0) {
-        *pixels++ = aColor;
-        x2--;
-      }
-    }
-
-    // Draw rectangle's bottom side
-    if (aY2 >= viewPortOffsetY && aY2 < clipRectHeight) {
-      // cache initial coordinates
-      x2 = w;
-
-      pixels = &this->mPixels[aY2 * pitch + xMax];
-      while (x2 > 3) {
-        *pixels++ = aColor;
-        *pixels++ = aColor;
-        *pixels++ = aColor;
-        *pixels++ = aColor;
-        x2 -= 4;
-      }
-
-      while (x2 > 0) {
-        *pixels++ = aColor;
-        x2--;
-      }
-    }
-  }
-
-  // Draw vertical lines
-  if (aY2 >= viewPortOffsetY && aY1 < clipRectHeight) {
-    // Don't start before the top edge
-    if (aY1 < viewPortOffsetY) {
-      aY1   = viewPortOffsetY;
-      yDest = aY1 * pitch;
-    }
-
-    // Don't end past the bottom edge
-    if (aY2 > clipRectHeight) {
-      aY2 = clipRectHeight;
-    }
-
-    // calculate actual height (even if unchanged)
-    aY2 -= aY1 - 1;
-
-    // Draw rectangle's left side
-    if (aX1 >= viewPortOffsetX && aX1 < clipRectWidth) {
-      // cache initial coordinates
-      y2 = aY2;
-
-      pixels = &this->mPixels[yDest + aX1];
-      while (y2 > 3) {
-        *pixels = aColor;
-        pixels += pitch;
-        *pixels = aColor;
-        pixels += pitch;
-        *pixels = aColor;
-        pixels += pitch;
-        *pixels = aColor;
-        pixels += pitch;
-        y2 -= 4;
-      }
-
-      while (y2 > 0) {
-        *pixels = aColor;
-        pixels += pitch;
-        y2--;
-      }
-    }
-
-    // Draw rectangle's right side
-    if (aX2 >= viewPortOffsetX && aX2 < clipRectWidth) {
-      // cache initial coordinates
-      y2 = aY2;
-
-      pixels = &this->mPixels[yDest + aX2];
-      while (y2 > 3) {
-        *pixels = aColor;
-        pixels += pitch;
-        *pixels = aColor;
-        pixels += pitch;
-        *pixels = aColor;
-        pixels += pitch;
-        *pixels = aColor;
-        pixels += pitch;
-        y2 -= 4;
-      }
-
-      while (y2 > 0) {
-        *pixels = aColor;
-        pixels += pitch;
-        y2--;
-      }
-    }
-  }
+  const TInt width = aX2 - aX1 + 1;
+  const TInt height = aY2 - aY1 + 1;
+  DrawFastHLine(aViewPort, aX1, aY1, width, aColor);
+  DrawFastHLine(aViewPort, aX1, aY2, width, aColor);
+  DrawFastVLine(aViewPort, aX1, aY1, height, aColor);
+  DrawFastVLine(aViewPort, aX2, aY1, height, aColor);
 }
 
 void BBitmap::FillRect(BViewPort *aViewPort, TInt aX1, TInt aY1, TInt aX2, TInt aY2, TUint8 aColor) {
-  TInt viewPortOffsetX = 0;
-  TInt viewPortOffsetY = 0;
+  const TInt width = ABS(aX2 - aX1 + 1);
+  const TInt height = ABS(aY2 - aY1 + 1);
 
-  // Create the viewport
-  TRect clipRect;
-  if (aViewPort) {
-    aViewPort->GetRect(clipRect);
-    viewPortOffsetX = TInt(round(aViewPort->mOffsetX));
-    viewPortOffsetY = TInt(round(aViewPort->mOffsetY));
-    aX1 += viewPortOffsetX;
-    aX2 += viewPortOffsetX;
-    aY1 += viewPortOffsetY;
-    aY2 += viewPortOffsetY;
-  } else {
-    clipRect.Set(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
-  }
-
-  // Store viewport width/height
-  const TInt clipRectWidth  = clipRect.Width();
-  const TInt clipRectHeight = clipRect.Height();
-
-  // Check if the entire rect is not on the display
-  if (aX2 <= viewPortOffsetX || aX1 >= clipRectWidth || aY2 <= viewPortOffsetY || aY1 >= clipRectHeight) {
+  if (width > height) {
+    TInt h = height;
+    while (h--) {
+      DrawFastHLine(aViewPort, aX1, aY1++, width, aColor);
+    }
     return;
   }
 
-  // Don't start before the left edge
-  if (aX1 < viewPortOffsetX) {
-    aX1 = viewPortOffsetX;
-  }
-
-  // Don't start before the top edge
-  if (aY1 < viewPortOffsetY) {
-    aY1 = viewPortOffsetY;
-  }
-
-  // Don't end past the right edge
-  if (aX2 > clipRectWidth) {
-    aX2 = clipRectWidth;
-  }
-
-  // Don't end past the bottom edge
-  if (aY2 > clipRectHeight) {
-    aY2 = clipRectHeight;
-  }
-
-  // calculate actual width and height (even if unchanged)
-  aX2 -= aX1 - 1;
-  aY2 -= aY1 - 1;
-
-  TUint8        *pixels;
-  const TUint32 pitch       = this->mPitch;
-  const TUint32 yDest       = aY1 * pitch;
-
-  while (aX2--) {
-    TInt h = aY2;
-    pixels = &this->mPixels[yDest + aX1++];
-
-    while (h > 3) {
-      *pixels = aColor;
-      pixels += pitch;
-      *pixels = aColor;
-      pixels += pitch;
-      *pixels = aColor;
-      pixels += pitch;
-      *pixels = aColor;
-      pixels += pitch;
-      h -= 4;
-    }
-
-    while (h--) {
-      *pixels = aColor;
-      pixels += pitch;
-    }
+  TInt w = width;
+  while (w--) {
+    DrawFastVLine(aViewPort, aX1++, aY1, height, aColor);
   }
 }
 
@@ -1372,13 +1206,14 @@ void BBitmap::DrawCircle(BViewPort *aViewPort, TInt aX, TInt aY, TUint r, TUint8
     viewPortOffsetY = TInt(round(aViewPort->mOffsetY));
     aX += viewPortOffsetX;
     aY += viewPortOffsetY;
-  } else {
-    clipRect.Set(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+  }
+  else {
+    clipRect.Set(0, 0, SCREEN_WIDTH - 1, SCREEN_HEIGHT - 1);
   }
 
   // Store viewport width/height
-  const TInt clipRectWidth  = clipRect.Width();
-  const TInt clipRectHeight = clipRect.Height();
+  const TInt clipRectWidth = clipRect.Width() + viewPortOffsetX;
+  const TInt clipRectHeight = clipRect.Height() + viewPortOffsetY;
 
   TInt maxX = aX + r;
   TInt minX = aX - r;
@@ -1386,28 +1221,29 @@ void BBitmap::DrawCircle(BViewPort *aViewPort, TInt aX, TInt aY, TUint r, TUint8
   TInt minY = aY - r;
 
   // Circle is outside of the viewport
-  if (maxX < viewPortOffsetX || minX > clipRectWidth || maxY < viewPortOffsetY || minY > clipRectHeight) {
+  if (maxX < viewPortOffsetX || minX >= clipRectWidth ||
+      maxY < viewPortOffsetY || minY >= clipRectHeight) {
     return;
   }
 
-  TInt          f     = 1 - r;
-  TInt          ddF_x = 1;
-  TInt          ddF_y = -(r << 1);
-  TInt          x     = 0;
-  TInt          y     = r;
-  TInt          xx1, xx2, xx3, xx4, yy1, yy2, yy3, yy4;
-  TUint32       yy1Dest, yy2Dest, yy3Dest, yy4Dest;
-  const TUint32 pitch = this->mPitch;
+  TInt f = 1 - r;
+  TInt ddF_x = 1;
+  TInt ddF_y = -(r << 1);
+  TInt x = 0;
+  TInt y = r;
+  TInt xx1, xx2, xx3, xx4, yy1, yy2, yy3, yy4;
+  TUint32 yy1Dest, yy2Dest, yy3Dest, yy4Dest;
 
   // Circle is inside the viewport
-  if (minX >= viewPortOffsetX && maxX < clipRectWidth && minY >= viewPortOffsetY && maxY < clipRectHeight) {
+  if (minX >= viewPortOffsetX && maxX < clipRectWidth &&
+      minY >= viewPortOffsetY && maxY < clipRectHeight) {
     // top and bottom center pixels
-    this->mPixels[maxY * pitch + aX] = aColor;
-    this->mPixels[minY * pitch + aX] = aColor;
+    mPixels[maxY * mPitch + aX] = aColor;
+    mPixels[minY * mPitch + aX] = aColor;
 
     // left and right center pixels
-    this->mPixels[aY * pitch + maxX] = aColor;
-    this->mPixels[aY * pitch + minX] = aColor;
+    mPixels[aY * mPitch + maxX] = aColor;
+    mPixels[aY * mPitch + minX] = aColor;
 
     while (x < y) {
       if (f >= 0) {
@@ -1420,51 +1256,52 @@ void BBitmap::DrawCircle(BViewPort *aViewPort, TInt aX, TInt aY, TUint r, TUint8
       ddF_x += 2;
       f += ddF_x;
 
-      xx1     = aX + x;
-      xx2     = aX - x;
-      xx3     = aX + y;
-      xx4     = aX - y;
-      yy1     = aY + y;
-      yy2     = aY - y;
-      yy3     = aY + x;
-      yy4     = aY - x;
-      yy1Dest = yy1 * pitch;
-      yy2Dest = yy2 * pitch;
-      yy3Dest = yy3 * pitch;
-      yy4Dest = yy4 * pitch;
+      xx1 = aX + x;
+      xx2 = aX - x;
+      xx3 = aX + y;
+      xx4 = aX - y;
+      yy1 = aY + y;
+      yy2 = aY - y;
+      yy3 = aY + x;
+      yy4 = aY - x;
+      yy1Dest = yy1 * mPitch;
+      yy2Dest = yy2 * mPitch;
+      yy3Dest = yy3 * mPitch;
+      yy4Dest = yy4 * mPitch;
 
       // top and bottom right arcs
-      this->mPixels[yy1Dest + xx1] = aColor;
-      this->mPixels[yy2Dest + xx1] = aColor;
-      this->mPixels[yy3Dest + xx3] = aColor;
-      this->mPixels[yy4Dest + xx3] = aColor;
+      mPixels[yy1Dest + xx1] = aColor;
+      mPixels[yy2Dest + xx1] = aColor;
+      mPixels[yy3Dest + xx3] = aColor;
+      mPixels[yy4Dest + xx3] = aColor;
 
       // top and bottom left arcs
-      this->mPixels[yy1Dest + xx2] = aColor;
-      this->mPixels[yy2Dest + xx2] = aColor;
-      this->mPixels[yy3Dest + xx4] = aColor;
-      this->mPixels[yy4Dest + xx4] = aColor;
+      mPixels[yy1Dest + xx2] = aColor;
+      mPixels[yy2Dest + xx2] = aColor;
+      mPixels[yy3Dest + xx4] = aColor;
+      mPixels[yy4Dest + xx4] = aColor;
     }
-  } else {
+  }
+  else {
     // Circle is partially inside the viewport
     TBool yy1Visible, yy2Visible, yy3Visible, yy4Visible;
 
     // top and bottom center pixels
     if (aX >= viewPortOffsetX && aX < clipRectWidth) {
       if (maxY < clipRectHeight) {
-        this->mPixels[maxY * pitch + aX] = aColor;
+        mPixels[maxY * mPitch + aX] = aColor;
       }
       if (minY >= viewPortOffsetY) {
-        this->mPixels[minY * pitch + aX] = aColor;
+        mPixels[minY * mPitch + aX] = aColor;
       }
     }
     // left and right center pixels
     if (aY >= viewPortOffsetY && aY < clipRectHeight) {
       if (maxX < clipRectWidth) {
-        this->mPixels[aY * pitch + maxX] = aColor;
+        mPixels[aY * mPitch + maxX] = aColor;
       }
       if (minX >= viewPortOffsetX) {
-        this->mPixels[aY * pitch + minX] = aColor;
+        mPixels[aY * mPitch + minX] = aColor;
       }
     }
 
@@ -1479,18 +1316,18 @@ void BBitmap::DrawCircle(BViewPort *aViewPort, TInt aX, TInt aY, TUint r, TUint8
       ddF_x += 2;
       f += ddF_x;
 
-      xx1        = aX + x;
-      xx2        = aX - x;
-      xx3        = aX + y;
-      xx4        = aX - y;
-      yy1        = aY + y;
-      yy2        = aY - y;
-      yy3        = aY + x;
-      yy4        = aY - x;
-      yy1Dest    = yy1 * pitch;
-      yy2Dest    = yy2 * pitch;
-      yy3Dest    = yy3 * pitch;
-      yy4Dest    = yy4 * pitch;
+      xx1 = aX + x;
+      xx2 = aX - x;
+      xx3 = aX + y;
+      xx4 = aX - y;
+      yy1 = aY + y;
+      yy2 = aY - y;
+      yy3 = aY + x;
+      yy4 = aY - x;
+      yy1Dest = yy1 * mPitch;
+      yy2Dest = yy2 * mPitch;
+      yy3Dest = yy3 * mPitch;
+      yy4Dest = yy4 * mPitch;
       yy1Visible = yy1 >= viewPortOffsetY && yy1 < clipRectHeight;
       yy2Visible = yy2 >= viewPortOffsetY && yy2 < clipRectHeight;
       yy3Visible = yy3 >= viewPortOffsetY && yy3 < clipRectHeight;
@@ -1499,36 +1336,36 @@ void BBitmap::DrawCircle(BViewPort *aViewPort, TInt aX, TInt aY, TUint r, TUint8
       // top and bottom right arcs
       if (xx1 >= viewPortOffsetX && xx1 < clipRectWidth) {
         if (yy1Visible) {
-          this->mPixels[yy1Dest + xx1] = aColor;
+          mPixels[yy1Dest + xx1] = aColor;
         }
         if (yy2Visible) {
-          this->mPixels[yy2Dest + xx1] = aColor;
+          mPixels[yy2Dest + xx1] = aColor;
         }
       }
       if (xx3 >= viewPortOffsetX && xx3 < clipRectWidth) {
         if (yy3Visible) {
-          this->mPixels[yy3Dest + xx3] = aColor;
+          mPixels[yy3Dest + xx3] = aColor;
         }
         if (yy4Visible) {
-          this->mPixels[yy4Dest + xx3] = aColor;
+          mPixels[yy4Dest + xx3] = aColor;
         }
       }
 
       // top and bottom left arcs
       if (xx2 >= viewPortOffsetX && xx2 < clipRectWidth) {
         if (yy1Visible) {
-          this->mPixels[yy1Dest + xx2] = aColor;
+          mPixels[yy1Dest + xx2] = aColor;
         }
         if (yy2Visible) {
-          this->mPixels[yy2Dest + xx2] = aColor;
+          mPixels[yy2Dest + xx2] = aColor;
         }
       }
       if (xx4 >= viewPortOffsetX && xx4 < clipRectWidth) {
         if (yy3Visible) {
-          this->mPixels[yy3Dest + xx4] = aColor;
+          mPixels[yy3Dest + xx4] = aColor;
         }
         if (yy4Visible) {
-          this->mPixels[yy4Dest + xx4] = aColor;
+          mPixels[yy4Dest + xx4] = aColor;
         }
       }
     }
@@ -1547,13 +1384,14 @@ void BBitmap::FillCircle(BViewPort *aViewPort, TInt aX, TInt aY, TUint r, TUint8
     viewPortOffsetY = TInt(round(aViewPort->mOffsetY));
     aX += viewPortOffsetX;
     aY += viewPortOffsetY;
-  } else {
-    clipRect.Set(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+  }
+  else {
+    clipRect.Set(0, 0, SCREEN_WIDTH - 1, SCREEN_HEIGHT - 1);
   }
 
   // Store viewport width/height
-  const TInt clipRectWidth  = clipRect.Width();
-  const TInt clipRectHeight = clipRect.Height();
+  const TInt clipRectWidth = clipRect.Width() + viewPortOffsetX;
+  const TInt clipRectHeight = clipRect.Height() + viewPortOffsetY;
 
   TInt maxX = aX + r;
   TInt minX = aX - r;
@@ -1561,23 +1399,23 @@ void BBitmap::FillCircle(BViewPort *aViewPort, TInt aX, TInt aY, TUint r, TUint8
   TInt minY = aY - r;
 
   // Circle is outside of the viewport
-  if (maxX < viewPortOffsetX || minX > clipRectWidth || maxY < viewPortOffsetY || minY > clipRectHeight) {
+  if (maxX < viewPortOffsetX || minX >= clipRectWidth ||
+      maxY < viewPortOffsetY || minY >= clipRectHeight) {
     return;
   }
 
-  TInt  f     = 1 - r;
-  TInt  ddF_x = 1;
-  TInt  ddF_y = -(r << 1);
-  TUint x     = 0;
-  TUint y     = r;
-  TUint w     = (r << 1) + 1;
-  TInt  xx1, yy1, yy2;
-
-  const TUint32 pitch = this->mPitch;
+  TInt f = 1 - r;
+  TInt ddF_x = 1;
+  TInt ddF_y = -(r << 1);
+  TUint x = 0;
+  TUint y = r;
+  TUint w = (r << 1) + 1;
+  TInt xx1, yy1, yy2;
 
   // Circle is inside the viewport
-  if (minX >= viewPortOffsetX && maxX < clipRectWidth && minY >= viewPortOffsetY && maxY < clipRectHeight) {
-    TUint8 *pixels1 = &this->mPixels[aY * pitch + aX - r];
+  if (minX >= viewPortOffsetX && maxX < clipRectWidth &&
+      minY >= viewPortOffsetY && maxY < clipRectHeight) {
+    TUint8 *pixels1 = &mPixels[aY * mPitch + aX - r];
     TUint8 *pixels2;
 
     // Central line
@@ -1607,12 +1445,12 @@ void BBitmap::FillCircle(BViewPort *aViewPort, TInt aX, TInt aY, TUint r, TUint8
       f += ddF_x;
 
       // Top and bottom parts
-      w       = (x << 1) + 1;
-      xx1     = aX - x;
-      yy1     = aY + y;
-      yy2     = aY - y;
-      pixels1 = &this->mPixels[yy1 * pitch + xx1];
-      pixels2 = &this->mPixels[yy2 * pitch + xx1];
+      w = (x << 1) + 1;
+      xx1 = aX - x;
+      yy1 = aY + y;
+      yy2 = aY - y;
+      pixels1 = &mPixels[yy1 * mPitch + xx1];
+      pixels2 = &mPixels[yy2 * mPitch + xx1];
       while (w > 3) {
         *pixels1++ = aColor;
         *pixels1++ = aColor;
@@ -1632,12 +1470,12 @@ void BBitmap::FillCircle(BViewPort *aViewPort, TInt aX, TInt aY, TUint r, TUint8
       }
 
       // Center parts
-      w       = (y << 1) + 1;
-      xx1     = aX - y;
-      yy1     = aY + x;
-      yy2     = aY - x;
-      pixels1 = &this->mPixels[yy1 * pitch + xx1];
-      pixels2 = &this->mPixels[yy2 * pitch + xx1];
+      w = (y << 1) + 1;
+      xx1 = aX - y;
+      yy1 = aY + x;
+      yy2 = aY - x;
+      pixels1 = &mPixels[yy1 * mPitch + xx1];
+      pixels2 = &mPixels[yy2 * mPitch + xx1];
       while (w > 3) {
         *pixels1++ = aColor;
         *pixels1++ = aColor;
@@ -1656,7 +1494,8 @@ void BBitmap::FillCircle(BViewPort *aViewPort, TInt aX, TInt aY, TUint r, TUint8
         w--;
       }
     }
-  } else {
+  }
+  else {
     TUint8 *pixels;
 
     // Circle is partially inside the viewport
@@ -1666,7 +1505,8 @@ void BBitmap::FillCircle(BViewPort *aViewPort, TInt aX, TInt aY, TUint r, TUint8
     TInt xEnd = xx1 + w;
 
     // Central line
-    if (aY >= viewPortOffsetY && aY < clipRectHeight && xEnd >= viewPortOffsetX && xx1 < clipRectWidth) {
+    if (aY >= viewPortOffsetY && aY < clipRectHeight &&
+        xEnd >= viewPortOffsetX && xx1 < clipRectWidth) {
       // Don't start before the left edge
       if (xx1 < viewPortOffsetX) {
         xx1 = viewPortOffsetX;
@@ -1678,8 +1518,8 @@ void BBitmap::FillCircle(BViewPort *aViewPort, TInt aX, TInt aY, TUint r, TUint8
       }
 
       // calculate actual width (even if unchanged)
-      w      = TUint(xEnd - xx1);
-      pixels = &this->mPixels[aY * pitch + xx1];
+      w = TUint(xEnd - xx1);
+      pixels = &mPixels[aY * mPitch + xx1];
 
       while (w > 3) {
         *pixels++ = aColor;
@@ -1708,11 +1548,11 @@ void BBitmap::FillCircle(BViewPort *aViewPort, TInt aX, TInt aY, TUint r, TUint8
       f += ddF_x;
 
       // Top and bottom parts
-      w    = (x << 1) + 1;
-      xx1  = aX - x;
+      w = (x << 1) + 1;
+      xx1 = aX - x;
       xEnd = xx1 + w;
-      yy1  = aY + y;
-      yy2  = aY - y;
+      yy1 = aY + y;
+      yy2 = aY - y;
 
       if (xEnd >= viewPortOffsetX && xx1 < clipRectWidth) {
         // Don't start before the left edge
@@ -1730,7 +1570,7 @@ void BBitmap::FillCircle(BViewPort *aViewPort, TInt aX, TInt aY, TUint r, TUint8
 
         // Bottom part
         if (yy1 >= viewPortOffsetY && yy1 < clipRectHeight) {
-          pixels = &this->mPixels[yy1 * pitch + xx1];
+          pixels = &mPixels[yy1 * mPitch + xx1];
           while (w > 3) {
             *pixels++ = aColor;
             *pixels++ = aColor;
@@ -1747,8 +1587,8 @@ void BBitmap::FillCircle(BViewPort *aViewPort, TInt aX, TInt aY, TUint r, TUint8
 
         // Top part
         if (yy2 >= viewPortOffsetY && yy2 < clipRectHeight) {
-          w      = TUint(xEnd - xx1);
-          pixels = &this->mPixels[yy2 * pitch + xx1];
+          w = TUint(xEnd - xx1);
+          pixels = &mPixels[yy2 * mPitch + xx1];
           while (w > 3) {
             *pixels++ = aColor;
             *pixels++ = aColor;
@@ -1765,11 +1605,11 @@ void BBitmap::FillCircle(BViewPort *aViewPort, TInt aX, TInt aY, TUint r, TUint8
       }
 
       // Center parts
-      w    = (y << 1) + 1;
-      xx1  = aX - y;
+      w = (y << 1) + 1;
+      xx1 = aX - y;
       xEnd = xx1 + w;
-      yy1  = aY + x;
-      yy2  = aY - x;
+      yy1 = aY + x;
+      yy2 = aY - x;
       if (xEnd >= viewPortOffsetX && xx1 < clipRectWidth) {
         // Don't start before the left edge
         if (xx1 < viewPortOffsetX) {
@@ -1786,7 +1626,7 @@ void BBitmap::FillCircle(BViewPort *aViewPort, TInt aX, TInt aY, TUint r, TUint8
 
         // Bottom part
         if (yy1 >= viewPortOffsetY && yy1 < clipRectHeight) {
-          pixels = &this->mPixels[yy1 * pitch + xx1];
+          pixels = &mPixels[yy1 * mPitch + xx1];
           while (w > 3) {
             *pixels++ = aColor;
             *pixels++ = aColor;
@@ -1803,8 +1643,8 @@ void BBitmap::FillCircle(BViewPort *aViewPort, TInt aX, TInt aY, TUint r, TUint8
 
         // Top part
         if (yy2 >= viewPortOffsetY && yy2 < clipRectHeight) {
-          w      = TUint(xEnd - xx1);
-          pixels = &this->mPixels[yy2 * pitch + xx1];
+          w = TUint(xEnd - xx1);
+          pixels = &mPixels[yy2 * mPitch + xx1];
           while (w > 3) {
             *pixels++ = aColor;
             *pixels++ = aColor;

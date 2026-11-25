@@ -1,5 +1,7 @@
 #include "BResourceManager.h"
 #include "BBitmap.h"
+#include "BTileMap.h"
+#include "BSpriteSheet.h"
 
 // TODO: should application incbin the resources binary?
 
@@ -15,16 +17,15 @@ BResourceManager gResourceManager((TAny *)Resources_start);
 
 // LINUX TARGET
 asm(
-"   .section .rodata\n"
-"   .global binary_Resources_bin_start\n"
-"   .global binary_Resources_bin_end\n"
-"   .balign 16\n"
-"binary_Resources_bin_start:\n"
-"   .incbin \"Resources.bin\"\n"
-"binary_Resources_bin_end:\n"
-"   .byte 0\n"
-"   .align 4\n"
-);
+    "   .section .rodata\n"
+    "   .global binary_Resources_bin_start\n"
+    "   .global binary_Resources_bin_end\n"
+    "   .balign 16\n"
+    "binary_Resources_bin_start:\n"
+    "   .incbin \"Resources.bin\"\n"
+    "binary_Resources_bin_end:\n"
+    "   .byte 0\n"
+    "   .align 4\n");
 //extern TUint8    binary_Resources_bin_end[];\n"
 extern __attribute((aligned(16))) TUint8 binary_Resources_bin_start[];
 //extern TUint8    binary_Resources_bin_start[];
@@ -33,85 +34,68 @@ extern __attribute((aligned(16))) TUint8 binary_Resources_bin_start[];
 
 // MAC TARGET
 asm(
-"   .section .rodata,.rodata\n"
-"   .global _binary_Resources_bin_start\n"
-"   .global _binary_Resources_bin_end\n"
-"   .align 4\n"
-"_binary_Resources_bin_start:\n"
-"   .incbin \"Resources.bin\"\n"
-"_binary_Resources_bin_end:\n"
-"   .byte 0\n"
-"   .align 4\n"
-);
+    "   .section .rodata,.rodata\n"
+    "   .global _binary_Resources_bin_start\n"
+    "   .global _binary_Resources_bin_end\n"
+    "   .align 4\n"
+    "_binary_Resources_bin_start:\n"
+    "   .incbin \"Resources.bin\"\n"
+    "_binary_Resources_bin_end:\n"
+    "   .byte 0\n"
+    "   .align 4\n");
 extern "C" {
 extern TUint8 binary_Resources_bin_start[];
 extern TUint8 binary_Resources_bin_end[];
 //extern TUint8 binary_Resources_bin_start[];
 }
 
-#endif  // MAC TARGET
+#endif // MAC TARGET
 
 BResourceManager gResourceManager(binary_Resources_bin_start);
 
-#endif  // LINUX OR MAC TARGET
+#endif // LINUX OR MAC TARGET
 
 struct BitmapSlot {
   BitmapSlot(TInt16 aResourceId, TInt16 aImageType, BBitmap *aBitmap, TBool aCached = EFalse) {
     mResourceId = aResourceId;
-    mImageType  = aImageType;
-    mBitmap     = aBitmap;
-    mCached     = aCached;
+    mImageType = aImageType;
+    mBitmap = aBitmap;
+    mCached = aCached;
   }
 
-  TInt16  mResourceId;
-  TInt16  mImageType;
+  TInt16 mResourceId;
+  TInt16 mImageType;
   BBitmap *mBitmap;
-  TBool   mCached;
+  TBool mCached;
 };
 
 struct RawSlot {
   RawSlot(TInt16 aResourceId, BRaw *aRaw, TBool aCached = EFalse) {
     mResourceId = aResourceId;
-    mCached     = aCached;
-    mRaw        = aRaw;
+    mCached = aCached;
+    mRaw = aRaw;
   }
 
   TInt16 mResourceId;
-  BRaw   *mRaw;
-  TBool  mCached;
+  BRaw *mRaw;
+  TBool mCached;
 };
 
-void HexDump(TUint8 *ptr, int length) {
-  TUint32 addr  = 0;
-  TInt    count = 0;
-  while (length > 0) {
-    printf("%08x ", addr);
-    for (int i = 0; i < 8 && --length > 0; i++) {
-      printf("%02x ", *ptr++);
-      count++;
-      if (count > 7) {
-        count = 0;
-        addr += 8;
-        break;
-      }
-    }
-    printf("\n");
-  }
-}
-
 BResourceManager::BResourceManager(TAny *aROM) {
-  TUint32 *ptr = (TUint32 *) aROM;
-  this->mPtr           = aROM;
-  this->mNumResources  = *ptr++;
+  TUint32 *ptr = (TUint32 *)aROM;
+  this->mPtr = aROM;
+  this->mNumResources = *ptr++;
   this->mResourceTable = ptr;
-  this->mROM           = (TUint8 *) &ptr[this->mNumResources];
+  this->mROM = (TUint8 *)&ptr[this->mNumResources];
   for (TInt i = 0; i < MAX_BITMAP_SLOTS; i++) {
     mBitmapSlots[i] = ENull;
+  }
+  for (TInt i = 0; i < MAX_PRELOADED_BITMAPS; i++) {
+    mPreloadedBitmaps[i] = ENull;
   }
   for (TInt i = 0; i < MAX_RAW_SLOTS; i++) {
     mRawSlots[i] = ENull;
   }
-//  Dump();
 }
 
 BResourceManager::~BResourceManager() {
@@ -120,14 +104,57 @@ BResourceManager::~BResourceManager() {
   ReleaseRawSlots();
 }
 
+TPalette *BResourceManager::LoadPalette(TInt16 aPaletteId) {
+  TUint8 *rom = &this->mROM[this->mResourceTable[aPaletteId]];
+  TPalette *p = new TPalette[256];
+  for (TInt c = 0; c < 256; c++) {
+    p[c].r = *rom++;
+    p[c].g = *rom++;
+    p[c].b = *rom++;
+  }
+  return p;
+}
+
+void BResourceManager::FreePalette(TPalette *aPalette) {
+  delete[] aPalette;
+}
+
+BBitmap *BResourceManager::LoadBitmap(TInt16 aResourceId) {
+  return BBitmap::CreateBBitmap(&this->mROM[this->mResourceTable[aResourceId]]);
+}
+
+BTileMap *BResourceManager::LoadTileMap(TInt16 aResourceId, TInt16 aTilesetId) {
+  return new BTileMap(&this->mROM[this->mResourceTable[aResourceId]], aTilesetId);
+}
+
 // Load a bitmap from FLASH/ROM/RODATA into a slot
 TBool BResourceManager::LoadBitmap(TInt16 aResourceId, TInt16 aSlotId, TInt16 aImageType) {
   BitmapSlot *slot = mBitmapSlots[aSlotId];
   if (slot) {
     return slot->mResourceId == aResourceId;
   }
-  auto *bm = new BBitmap(&this->mROM[this->mResourceTable[aResourceId]]);
-  mBitmapSlots[aSlotId] = new BitmapSlot(aResourceId, aImageType, bm);
+  if (mPreloadedBitmaps[aResourceId]) {
+    auto *bm = mPreloadedBitmaps[aResourceId];
+    mBitmapSlots[aSlotId] = new BitmapSlot(aResourceId, aImageType, bm);
+  }
+  else {
+    auto *bm = BBitmap::CreateBBitmap(&this->mROM[this->mResourceTable[aResourceId]]);
+    mBitmapSlots[aSlotId] = new BitmapSlot(aResourceId, aImageType, bm);
+  }
+  return ETrue;
+}
+
+BSpriteSheet *BResourceManager::LoadSpriteSheet(TInt16 aResourceId) {
+  TUint32 offset = this->mResourceTable[aResourceId];
+  return new BSpriteSheet(&this->mROM[offset]);
+}
+
+TBool BResourceManager::PreloadBitmap(TInt16 aResourceId) {
+  if (mPreloadedBitmaps[aResourceId]) {
+    delete mPreloadedBitmaps[aResourceId];
+  }
+  auto *bm = BBitmap::CreateBBitmap(&this->mROM[this->mResourceTable[aResourceId]]);
+  mPreloadedBitmaps[aResourceId] = bm;
   return ETrue;
 }
 
@@ -143,10 +170,17 @@ TBool BResourceManager::SetBitmap(BBitmap *aBitmap, TInt16 aSlotId, TInt16 aImag
 TBool BResourceManager::ReleaseBitmapSlot(TInt16 aSlotId) {
   BitmapSlot *slot = mBitmapSlots[aSlotId];
   if (!slot || slot->mCached) {
-    printf("ReleaseBitmapSlot failed for %d\n", aSlotId);
+#ifndef PRODUCTION
+#if (defined(__XTENSA__) && defined(DEBUGME)) || !defined(__XTENSA__)
+    printf("WARNING: ReleaseBitmapSlot failed for %d\n", aSlotId);
+#endif
+#endif
     return EFalse;
   }
-  delete slot->mBitmap;
+  if (mPreloadedBitmaps[aSlotId] == ENull) {
+    // don't delete preloaded bitmaps
+    delete slot->mBitmap;
+  }
   delete slot;
   mBitmapSlots[aSlotId] = ENull;
   return ETrue;
@@ -192,7 +226,7 @@ TInt BResourceManager::BitmapWidth(TInt aSlotId) {
     64, 128, 64, 256,
     128, 256, 256
   };
-  BitmapSlot          *slot        = mBitmapSlots[aSlotId];
+  BitmapSlot *slot = mBitmapSlots[aSlotId];
   if (!slot) {
     return 0;
   }
@@ -209,7 +243,7 @@ TInt BResourceManager::BitmapHeight(TInt aSlotId) {
     128, 64, 256, 64,
     128, 256, 256
   };
-  BitmapSlot          *slot         = mBitmapSlots[aSlotId];
+  BitmapSlot *slot = mBitmapSlots[aSlotId];
   if (!slot) {
     return 0;
   }
@@ -269,17 +303,20 @@ BRaw *BResourceManager::GetRaw(TInt16 aSlotId) {
   return slot->mRaw;
 }
 
-
 void BResourceManager::Dump() {
+  //#ifndef PRODUCTION
+  //#if (defined(__XTENSA__) && defined(DEBUGME)) || !defined(__XTENSA__)
   printf("BResourceManager Dump\n");
   printf("mNumResources: %d\n", mNumResources);
   printf("OFFSETS:\n");
   for (TInt i = 0; i < mNumResources; i++) {
     printf("%8d: ", mResourceTable[i]);
-    TUint8    *ptr = &mROM[mResourceTable[i]];
-    for (TInt j    = 0; j < 16; j++) {
+    TUint8 *ptr = &mROM[mResourceTable[i]];
+    for (TInt j = 0; j < 16; j++) {
       printf("%02x ", *ptr++);
     }
     printf("\n");
   }
+  //#endif
+  //#endif
 }
