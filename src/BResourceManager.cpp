@@ -5,7 +5,10 @@
 
 // TODO: should application incbin the resources binary?
 
-#ifdef __XTENSA__ // ODROID GO TARGET
+#if defined(CE_PORTABLE_RESOURCES)
+extern TUint8 gCreativeEngineResources[];
+BResourceManager gResourceManager(gCreativeEngineResources);
+#elif defined(__XTENSA__) // ODROID GO TARGET
 extern const TUint8 Resources_start[] asm("_binary_Resources_bin_start");
 BResourceManager gResourceManager((TAny *)Resources_start);
 //extern const TUint8  reesources_bin_start[] asm("_binary_resources_bin_start");

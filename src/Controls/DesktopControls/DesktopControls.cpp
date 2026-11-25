@@ -2,61 +2,25 @@
 
 #include "DesktopControls.h"
 
-#ifdef CONTROLLER_SUPPORT
-
-#include <SDL.h>
-
+#if CONTROLLER_SUPPORT
+#include "Gamepad.h"
 #endif
 
-
-DesktopControls::DesktopControls() : Controls() {
-#ifdef CONTROLLER_SUPPORT
-  SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER | SDL_INIT_JOYSTICK | SDL_INIT_HAPTIC);
-
-  haptic = ENull;
-  ctrl = ENull;
-
-  for (TInt i = 0; i < SDL_NumJoysticks(); ++i) {
-    if (!SDL_IsGameController(i)) {
-      continue;
-    }
-    ctrl = SDL_GameControllerOpen(i);
-    haptic = SDL_HapticOpenFromJoystick(SDL_GameControllerGetJoystick(ctrl));
-    break;
-
-#ifndef PRODUCTION
-    SDL_Log("Found a compatible controller named \'%s\'", SDL_GameControllerNameForIndex(i));
-    SDL_Log("Controller %i is mapped as \"%s\".", i, SDL_GameControllerMapping(ctrl));
-#endif
-
-  }
-
-#endif
-}
-
-DesktopControls::~DesktopControls() {
-#ifdef CONTROLLER_SUPPORT
-  if (haptic) {
-    SDL_HapticClose(haptic);
-  }
-
-  SDL_QuitSubSystem(SDL_INIT_GAMECONTROLLER | SDL_INIT_JOYSTICK | SDL_INIT_HAPTIC);
-#endif
-}
-
-#ifdef CONTROLLER_SUPPORT
 void DesktopControls::Rumble(TFloat aStrength, TInt aTime) {
-  if (haptic == ENull || SDL_NumJoysticks() == 0) {
-    return;
-  }
-
-  // Initialize simple rumble
-  SDL_HapticRumbleInit(haptic);
-  SDL_HapticRumblePlay(haptic, aStrength, aTime);
-}
+#if CONTROLLER_SUPPORT
+  RumbleGamepad(aStrength, aTime);
+#else
+  (void)aStrength;
+  (void)aTime;
 #endif
+}
 
 TBool DesktopControls::Poll() {
+#if CONTROLLER_SUPPORT
+  const TUint16 gamepadKeys = ReadGamepad();
+#else
+  const TUint16 gamepadKeys = 0;
+#endif
   SDL_Event e;
 
   while (SDL_PollEvent(&e)) {
@@ -65,107 +29,15 @@ TBool DesktopControls::Poll() {
       keys |= BUTTONQ;
     }
 
-    // Controllers
-#ifdef CONTROLLER_SUPPORT
-    if (SDL_NumJoysticks() > 0) {
-      if (SDL_GameControllerGetAxis(ctrl, SDL_CONTROLLER_AXIS_LEFTY) > CONTROLLER_AXIS_MIN ||
-          SDL_GameControllerGetButton(ctrl, SDL_CONTROLLER_BUTTON_DPAD_DOWN)) {
-        keys |= JOYDOWN;
-      } else {
-        keys &= TUint16(~JOYDOWN);
-      }
-      if (SDL_GameControllerGetAxis(ctrl, SDL_CONTROLLER_AXIS_LEFTY) < -CONTROLLER_AXIS_MIN ||
-          SDL_GameControllerGetButton(ctrl, SDL_CONTROLLER_BUTTON_DPAD_UP)) {
-        keys |= JOYUP;
-      } else {
-        keys &= TUint16(~JOYUP);
-      }
-      if (SDL_GameControllerGetAxis(ctrl, SDL_CONTROLLER_AXIS_LEFTX) > CONTROLLER_AXIS_MIN ||
-          SDL_GameControllerGetButton(ctrl, SDL_CONTROLLER_BUTTON_DPAD_RIGHT)) {
-        keys |= JOYRIGHT;
-      } else {
-        keys &= TUint16(~JOYRIGHT);
-      }
-      if (SDL_GameControllerGetAxis(ctrl, SDL_CONTROLLER_AXIS_LEFTX) < -CONTROLLER_AXIS_MIN ||
-          SDL_GameControllerGetButton(ctrl, SDL_CONTROLLER_BUTTON_DPAD_LEFT)) {
-        keys |= JOYLEFT;
-      } else {
-        keys &= TUint16(~JOYLEFT);
-      }
-
-      if (e.type == SDL_CONTROLLERBUTTONDOWN) {
-        switch (e.cbutton.button) {
-          case SDL_CONTROLLER_BUTTON_A:
-            keys |= BUTTONB;
-            break;
-          case SDL_CONTROLLER_BUTTON_B:
-            keys |= BUTTONA;
-            break;
-          case SDL_CONTROLLER_BUTTON_X:
-            keys |= BUTTONX;
-            break;
-          case SDL_CONTROLLER_BUTTON_Y:
-            keys |= BUTTONY;
-            break;
-          case SDL_CONTROLLER_BUTTON_BACK:
-            keys |= BUTTON_SELECT;
-            break;
-          case SDL_CONTROLLER_BUTTON_START:
-            keys |= BUTTON_START;
-            break;
-          case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:
-            keys |= BUTTONL;
-            break;
-          case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER:
-            keys |= BUTTONR;
-            break;
-          case SDL_CONTROLLER_BUTTON_GUIDE:
-            keys |= BUTTONQ;
-            break;
-        }
-      }
-      if (e.type == SDL_CONTROLLERBUTTONUP) {
-        switch (e.cbutton.button) {
-          case SDL_CONTROLLER_BUTTON_A:
-            keys &= TUint16(~BUTTONB);
-            break;
-          case SDL_CONTROLLER_BUTTON_B:
-            keys &= TUint16(~BUTTONA);
-            break;
-          case SDL_CONTROLLER_BUTTON_X:
-            keys &= TUint16(~BUTTONX);
-            break;
-          case SDL_CONTROLLER_BUTTON_Y:
-            keys &= TUint16(~BUTTONY);
-            break;
-          case SDL_CONTROLLER_BUTTON_BACK:
-            keys &= TUint16(~BUTTON_SELECT);
-            break;
-          case SDL_CONTROLLER_BUTTON_START:
-            keys &= TUint16(~BUTTON_START);
-            break;
-          case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:
-            keys &= TUint16(~BUTTONL);
-            break;
-          case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER:
-            keys &= TUint16(~BUTTONR);
-            break;
-          case SDL_CONTROLLER_BUTTON_GUIDE:
-            keys &= TUint16(~BUTTONQ);
-            break;
-        }
-      }
-    }
-#endif
-
-
     // Keyboard
     if (e.type == SDL_KEYDOWN) {
       switch (e.key.keysym.scancode) {
         // QUIT button, will never be set on target
+#ifndef __EMSCRIPTEN__
         case SDL_SCANCODE_Q:
           keys |= BUTTONQ;
           break;
+#endif
         case SDL_SCANCODE_1:
           keys |= BUTTON1;
           break;
@@ -230,9 +102,11 @@ TBool DesktopControls::Poll() {
     if (e.type == SDL_KEYUP) {
       switch (e.key.keysym.scancode) {
         // QUIT button, will never be set on target
+#ifndef __EMSCRIPTEN__
         case SDL_SCANCODE_Q:
           keys &= TUint16(~BUTTONQ);
           break;
+#endif
         case SDL_SCANCODE_1:
           keys &= TUint16(~BUTTON1);
           break;
@@ -294,12 +168,15 @@ TBool DesktopControls::Poll() {
           break;
       }
     }
-    // cKeys are journaled if journaling is on!
-    dKeys |= TUint16(TUint16(keys) ^ TUint16(TUint16(cKeys) & TUint16(keys)));
-    cKeys = keys;
     bKeys = keys;
+    const TUint16 combined = keys | gamepadKeys;
+    dKeys |= combined & ~cKeys;
+    cKeys = combined;
   }
 
+  const TUint16 combined = bKeys | gamepadKeys;
+  dKeys |= combined & ~cKeys;
+  cKeys = combined;
   return false;
 }
 

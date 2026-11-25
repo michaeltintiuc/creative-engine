@@ -3,6 +3,10 @@
 
 #include "BTypes.h"
 
+#ifndef CONTROLLER_SUPPORT
+#define CONTROLLER_SUPPORT 1
+#endif
+
 const TUint16 BUTTON1 = TUint16(1<<0);
 const TUint16 BUTTON2 = TUint16(1<<1);
 const TUint16 BUTTON3 = TUint16(1<<2);
@@ -51,7 +55,7 @@ public:
       return (cKeys & bits) ? ETrue : EFalse;
     }
 
-    void Rumble(TFloat aStrength, TInt aTime) {}
+    virtual void Rumble(TFloat, TInt) {}
 
     virtual TBool Poll() = 0;
 
