@@ -6,6 +6,9 @@
 
 DesktopDisplay::DesktopDisplay() : Display() {
 
+#ifdef _WIN32
+  SDL_SetMainReady();
+#endif
   SDL_Init(SDL_INIT_VIDEO); // Initialize SDL2
 
   int flags = SDL_WINDOW_OPENGL | SDL_WINDOW_INPUT_FOCUS | SDL_WINDOW_RESIZABLE | SDL_WINDOW_SHOWN;

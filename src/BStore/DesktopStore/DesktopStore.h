@@ -3,6 +3,9 @@
 
 #include <dirent.h>
 #include <sys/stat.h>
+#ifdef _WIN32
+#include <direct.h>
+#endif
 
 #include "BStoreBase.h"
 
@@ -17,17 +20,23 @@ public:
 
 public:
   void Initialize() OVERRIDE {
-    char *homeDir = getenv("HOME");
-
-    strcpy(mTargetDir, homeDir);
-    strcat(mTargetDir, "/.modus");
+#ifdef _WIN32
+    const char *homeDir = getenv("USERPROFILE");
+#else
+    const char *homeDir = getenv("HOME");
+#endif
+    snprintf(mTargetDir, sizeof(mTargetDir), "%s/.modus", homeDir ? homeDir : ".");
 
     DIR *dir = opendir(mTargetDir);
     if (dir) {
       closedir(dir);
     }
     else {
+#ifdef _WIN32
+      _mkdir(mTargetDir);
+#else
       mkdir(mTargetDir, S_IRUSR | S_IWUSR | S_IXUSR | S_IRGRP | S_IWGRP | S_IXGRP | S_IROTH);
+#endif
     }
 
     mInitialized = ETrue;
@@ -47,7 +56,7 @@ public:
     char name[4096];
     sprintf(name, "%s/%s.%s.store", mTargetDir, mStoreName, aKey);
 
-    FILE *fp = fopen(name, "r");
+    FILE *fp = fopen(name, "rb");
     if (!fp) {
       return EFalse;
     }
@@ -63,8 +72,11 @@ public:
     char name[4096];
     sprintf(name, "%s/%s.%s.store", mTargetDir, mStoreName, aKey);
 
-    FILE *fp = fopen(name, "w");
-    if (!fp || fwrite(aValue, aSize, 1, fp) != aSize) {
+    FILE *fp = fopen(name, "wb");
+    if (!fp) {
+      return EFalse;
+    }
+    if (fwrite(aValue, 1, aSize, fp) != aSize) {
       fclose(fp);
       return EFalse;
     }

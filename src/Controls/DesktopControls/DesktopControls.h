@@ -6,24 +6,11 @@
 #include <SDL.h>
 #include "Controls.h"
 
-#ifdef CONTROLLER_SUPPORT
-#define CONTROLLER_SUPPORT
-#define CONTROLLER_AXIS_MIN 24000
-#endif
-
 class DesktopControls : public Controls {
 public:
-  DesktopControls();
-  ~DesktopControls();
-
   TBool Poll() final;
 
-#ifdef CONTROLLER_SUPPORT
-  void Rumble(TFloat aStrength, TInt aTime);
-
-  SDL_Haptic         *haptic;
-  SDL_GameController *ctrl;
-#endif
+  void Rumble(TFloat aStrength, TInt aTime) override;
 };
 
 #endif // DESKTOPCONTROLS_H

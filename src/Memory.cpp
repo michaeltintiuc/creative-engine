@@ -23,7 +23,7 @@ extern "C" TAny *CallocMem(size_t numElements, size_t size, TUint16 aType) {
     return ptr;
   }
 
-  bzero(ptr, numElements * size);
+  memset(ptr, 0, numElements * size);
   return ptr;
 #endif
 

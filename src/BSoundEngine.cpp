@@ -1,5 +1,4 @@
 #include "BSoundEngine.h"
-#include <pthread.h>
 
 
 //#define DISABLE_AUDIO
@@ -79,16 +78,16 @@ static void fillBuffer(Uint8 *audioBuffer, size_t length) {
         printf("xmp_play_buffer not zero (result = %i)!\n", result);fflush(stdout);
 #endif
       }
-      bzero(audioBuffer, length);
+      memset(audioBuffer, 0, length);
     }
   }
   else {
-    bzero(audioBuffer, length);
+    memset(audioBuffer, 0, length);
   }
 
 
   if (soundEngine.IsMuted()) {
-    bzero(audioBuffer, length);
+    memset(audioBuffer, 0, length);
   }
 
   Mixer_MixChannels(audioBuffer, length);
